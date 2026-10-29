@@ -104,6 +104,11 @@ void handleCommand(netproxy::P2PService& service, const std::string& line) {
             text.erase(0, 1);
         }
 
+        if (!service.isStreamOpen(static_cast<std::uint32_t>(streamId))) {
+            netproxy::Log::warning("流尚未打开，等日志出现「流已打开」后再发送 streamId=", streamId);
+            return;
+        }
+
         if (service.sendData(static_cast<std::uint32_t>(streamId), text.data(), text.size())) {
             netproxy::Log::info("已提交数据 streamId=", streamId, " 长度=", text.size());
         } else {
