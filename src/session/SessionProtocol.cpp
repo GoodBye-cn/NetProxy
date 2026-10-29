@@ -9,9 +9,6 @@ namespace netproxy::session {
 
 namespace {
 
-constexpr std::uint32_t PROTOCOL_MAGIC = 0x4E50534E; // "NPSN"
-constexpr std::uint8_t PROTOCOL_VERSION = 1;
-
 bool isValidType(std::uint8_t rawType) {
     return rawType >= static_cast<std::uint8_t>(SessionType::Open) &&
            rawType <= static_cast<std::uint8_t>(SessionType::Ping);
@@ -38,9 +35,9 @@ std::string SessionMessage::encode() const {
     std::string buffer(size, '\0');
     auto* bytes = reinterpret_cast<unsigned char*>(&buffer[0]);
 
-    const std::uint32_t magic = htonl(PROTOCOL_MAGIC);
+    const std::uint32_t magic = htonl(protocol::MAGIC);
     std::memcpy(bytes, &magic, 4);
-    bytes[4] = PROTOCOL_VERSION;
+    bytes[4] = protocol::VERSION;
     bytes[5] = static_cast<unsigned char>(type);
     bytes[6] = static_cast<unsigned char>((flags >> 8) & 0xFF);
     bytes[7] = static_cast<unsigned char>(flags & 0xFF);
@@ -76,11 +73,11 @@ bool SessionMessage::decode(const void* data, std::size_t size, SessionMessage& 
 
     std::uint32_t magic = 0;
     std::memcpy(&magic, bytes, 4);
-    if (ntohl(magic) != PROTOCOL_MAGIC) {
+    if (ntohl(magic) != protocol::MAGIC) {
         return false;
     }
 
-    if (bytes[4] != PROTOCOL_VERSION) {
+    if (bytes[4] != protocol::VERSION) {
         return false;
     }
 

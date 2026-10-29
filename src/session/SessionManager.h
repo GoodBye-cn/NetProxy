@@ -13,6 +13,7 @@
 #include "SessionTable.h"
 #include "core/IoLoop.h"
 #include "core/TaskLoop.h"
+#include "transport/DataStreamManager.h"
 
 namespace netproxy::session {
 
@@ -28,6 +29,8 @@ struct SessionConfig {
     int keepaliveTimeoutMs = 10000;  // 每次 Ping 的等待时间
     int keepaliveRetryCount = 3;     // 连续无响应次数上限，超过判定断链
     int keepaliveTickMs = 1000;      // 保活检查粒度
+
+    transport::TransportConfig transport; // 数据传输参数
 };
 
 /**
@@ -50,6 +53,10 @@ public:
 
     // 会话事件回调：会话标识、对端节点标识、事件类型。
     using Handler = std::function<void(std::uint32_t sessionId, std::uint32_t peerNodeId, Event event)>;
+
+    // 数据交付回调：会话标识、对端节点标识、数据与长度。
+    using DataHandler =
+        std::function<void(std::uint32_t sessionId, std::uint32_t peerNodeId, const char* data, std::size_t size)>;
 
     // 查询对端地址，返回 false 表示节点未知。
     using PeerResolver = std::function<bool(std::uint32_t nodeId, netproxy::PeerInfo& peer)>;
@@ -135,11 +142,29 @@ public:
     std::vector<SessionRecord> list() const;
 
     /**
+     * 提交一条数据。
+     *
+     * @param sessionId 会话标识。
+     * @param data 数据内容。
+     * @param size 长度，不能超过 maxPayloadSize。
+     * @return 会话已建立且请求已受理返回 true。
+     * @note 实际发送与重传由 DataStream 负责，交付结果不回调给调用方。
+     */
+    bool send(std::uint32_t sessionId, const void* data, std::size_t size);
+
+    /**
      * 设置会话事件回调。
      *
      * @param handler 回调对象，在业务线程执行；为空表示取消。
      */
     void setHandler(Handler handler);
+
+    /**
+     * 设置数据交付回调。
+     *
+     * @param handler 回调对象，在业务线程执行；为空表示取消。
+     */
+    void setDataHandler(DataHandler handler);
 
 private:
     // I/O 线程：数据通道回调。
@@ -174,6 +199,12 @@ private:
     void tickKeepalive();
     void scheduleKeepalive();
 
+    // 数据传输：重传检查、交付转发与断链处理。
+    void tickData();
+    void scheduleDataTick();
+    void onDataDelivered(std::uint32_t sessionId, const char* data, std::size_t size);
+    void closeWithReason(std::uint32_t sessionId, CloseReason reason);
+
     // 回复拒绝。
     void sendReject(std::uint32_t sessionId, RejectReason reason, const net::IPAddress& target);
 
@@ -186,8 +217,10 @@ private:
     PeerResolver resolver_;
     std::uint32_t localNodeId_ = 0;
     core::TaskLoop& business_;
+    std::unique_ptr<transport::DataStreamManager> streams_;
     mutable std::mutex handlerMutex_;
     Handler handler_;
+    DataHandler dataHandler_;
     std::atomic<bool> running_{false};
 };
 

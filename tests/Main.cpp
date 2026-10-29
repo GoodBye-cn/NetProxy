@@ -19,6 +19,7 @@ int main(int argc, char* argv[]) {
     runCoreTests();
     runSessionTests();
     runP2PServiceTests();
+    runTransportTests();
 
     return test::finish("NetProxy");
 }

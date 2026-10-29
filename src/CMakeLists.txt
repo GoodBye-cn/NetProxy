@@ -18,6 +18,9 @@ add_library(netproxy
     session/SessionManager.cpp
     session/SessionProtocol.cpp
     session/SessionTable.cpp
+    transport/DataProtocol.cpp
+    transport/DataStream.cpp
+    transport/DataStreamManager.cpp
 )
 
 find_package(Threads REQUIRED)

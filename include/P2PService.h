@@ -40,6 +40,13 @@ struct P2PServiceConfig {
     std::size_t maxSessionsPerPeer = 8; // 单对节点会话上限
     int sessionRetryIntervalMs = 1000;  // Open 重发间隔
     int sessionRetryCount = 5;          // Open 最多重发次数
+
+    // 数据传输参数
+    std::size_t maxPayloadSize = 1400; // 单包负载上限
+    std::size_t sendWindow = 16;       // 发送窗口（报文数）
+    std::size_t receiveWindow = 64;    // 接收缓存上限（报文数）
+    int retransmitTimeoutMs = 200;     // 重传超时
+    int maxRetransmitCount = 5;        // 单包重传上限
 };
 
 /**
@@ -70,6 +77,18 @@ public:
      * @note 回调运行在业务线程，不能执行阻塞操作，也不要调用 stop()。
      */
     using SessionHandler = std::function<void(std::uint32_t sessionId, std::uint32_t peerNodeId, SessionEvent event)>;
+
+    /**
+     * 数据交付回调。
+     *
+     * @param sessionId 会话标识。
+     * @param peerNodeId 对端节点标识。
+     * @param data 数据内容，回调返回后失效，需要保留请自行拷贝。
+     * @param size 数据长度。
+     * @note 回调运行在业务线程，不能执行阻塞操作，也不要调用 stop()。
+     */
+    using DataHandler =
+        std::function<void(std::uint32_t sessionId, std::uint32_t peerNodeId, const char* data, std::size_t size)>;
 
     // 构造服务，不启动线程。
     P2PService();
@@ -187,6 +206,26 @@ public:
      * @note 可在启动前或运行中设置。
      */
     void setSessionHandler(SessionHandler handler);
+
+    /**
+     * 设置数据交付回调。
+     *
+     * @param handler 回调对象，为空表示取消。
+     * @note 可在启动前或运行中设置。
+     */
+    void setDataHandler(DataHandler handler);
+
+    /**
+     * 向已建立的会话提交一条数据。
+     *
+     * 可靠传输由会话层负责，按序交付到对端。
+     *
+     * @param sessionId 会话标识。
+     * @param data 数据内容。
+     * @param size 长度，不能超过 maxPayloadSize。
+     * @return 会话已建立且请求已受理返回 true。
+     */
+    bool sendData(std::uint32_t sessionId, const void* data, std::size_t size);
 
 private:
     struct Impl;

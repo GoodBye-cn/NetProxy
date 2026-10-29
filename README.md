@@ -163,6 +163,7 @@ service.stop();
 | --- | --- |
 | `open <nodeId>` | 向已发现的节点发起会话 |
 | `close <sessionId>` | 断开会话 |
+| `send <sessionId> <text>` | 向会话发送一条数据 |
 | `sessions` | 列出当前会话 |
 | `peers` | 列出已发现节点 |
 | `quit` | 退出 |

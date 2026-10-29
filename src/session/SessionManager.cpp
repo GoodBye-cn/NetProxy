@@ -29,7 +29,10 @@ std::uint32_t randomNonce() {
 SessionManager::SessionManager(DataChannel& channel, PeerResolver resolver, std::uint32_t localNodeId,
                                const SessionConfig& config, core::TaskLoop& business)
     : config_(config), channel_(channel), resolver_(std::move(resolver)), localNodeId_(localNodeId),
-      business_(business) {}
+      business_(business),
+      streams_(std::make_unique<transport::DataStreamManager>(
+          [this](const std::string& packet, const net::IPAddress& target) { channel_.send(packet, target); },
+          localNodeId, config.transport)) {}
 
 SessionManager::~SessionManager() {
     stop();
@@ -53,8 +56,15 @@ bool SessionManager::start() {
         return false;
     }
 
+    streams_->setDeliveredHandler([this](std::uint32_t sessionId, const char* data, std::size_t size) {
+        onDataDelivered(sessionId, data, size);
+    });
+    streams_->setClosedHandler(
+        [this](std::uint32_t sessionId, protocol::CloseReason reason) { closeWithReason(sessionId, reason); });
+
     running_ = true;
     scheduleKeepalive();
+    scheduleDataTick();
     Log::debug("会话模块已启动");
     return true;
 }
@@ -66,6 +76,7 @@ void SessionManager::stop() {
 
     channel_.setReceiver(nullptr);
     table_.clear();
+    streams_->clear();
     Log::debug("会话模块已停止");
 }
 
@@ -123,12 +134,41 @@ std::vector<SessionRecord> SessionManager::list() const {
     return table_.list();
 }
 
+bool SessionManager::send(std::uint32_t sessionId, const void* data, std::size_t size) {
+    if (!running_.load() || data == nullptr || size == 0) {
+        return false;
+    }
+
+    SessionRecord record;
+    if (!table_.find(sessionId, record) || record.state != SessionState::Established) {
+        return false;
+    }
+
+    std::string payload(static_cast<const char*>(data), size);
+    business_.post(
+        [this, sessionId, payload = std::move(payload)] { streams_->send(sessionId, payload.data(), payload.size()); });
+    return true;
+}
+
 void SessionManager::setHandler(Handler handler) {
     std::lock_guard<std::mutex> lock(handlerMutex_);
     handler_ = std::move(handler);
 }
 
+void SessionManager::setDataHandler(DataHandler handler) {
+    std::lock_guard<std::mutex> lock(handlerMutex_);
+    dataHandler_ = std::move(handler);
+}
+
 void SessionManager::handleDatagram(const net::IPAddress& from, const char* data, std::size_t size) {
+    // 数据报文交给传输模块，信令报文走会话状态机
+    if (size > 5 && protocol::isDataMessage(static_cast<unsigned char>(data[5]))) {
+        std::string packet(data, size);
+        business_.post(
+            [this, from, packet = std::move(packet)] { streams_->onDatagram(from, packet.data(), packet.size()); });
+        return;
+    }
+
     SessionMessage message;
     if (!SessionMessage::decode(data, size, message)) {
         return;
@@ -234,6 +274,7 @@ bool SessionManager::closeOnBusiness(std::uint32_t sessionId) {
     sendMessage(message, record.peerAddress);
 
     table_.remove(sessionId);
+    streams_->remove(sessionId);
 
     Log::debug("会话已关闭 sessionId=", sessionId);
     notify(sessionId, record.peerNodeId, Event::Closed);
@@ -278,6 +319,7 @@ void SessionManager::handleOpen(const net::IPAddress& from, const SessionMessage
     record.nonce = message.nonce;
     record.lastActivity = std::chrono::steady_clock::now();
     table_.insert(record);
+    streams_->create(record.sessionId, record.peerNodeId, record.peerAddress);
 
     SessionMessage accept;
     accept.type = SessionType::Accept;
@@ -317,6 +359,7 @@ void SessionManager::handleAccept(const net::IPAddress& from, const SessionMessa
         record.peerAddress = from;
     }
     table_.update(record);
+    streams_->create(record.sessionId, record.peerNodeId, record.peerAddress);
 
     Log::debug("会话已建立 sessionId=", record.sessionId, " peer=", record.peerNodeId);
     notify(record.sessionId, record.peerNodeId, Event::Opened);
@@ -351,6 +394,7 @@ void SessionManager::handleClose(const SessionMessage& message) {
     }
 
     table_.remove(message.sessionId);
+    streams_->remove(message.sessionId);
 
     Log::debug("会话已关闭 sessionId=", message.sessionId);
     notify(message.sessionId, record.peerNodeId, Event::Closed);
@@ -465,6 +509,7 @@ void SessionManager::tickKeepalive() {
                 sendMessage(close, record.peerAddress);
 
                 table_.remove(record.sessionId);
+                streams_->remove(record.sessionId);
                 notify(record.sessionId, record.peerNodeId, Event::Closed);
                 continue;
             }
@@ -497,6 +542,59 @@ void SessionManager::scheduleKeepalive() {
         tickKeepalive();
         scheduleKeepalive();
     });
+}
+
+void SessionManager::tickData() {
+    if (!running_.load()) {
+        return;
+    }
+
+    streams_->tick();
+    scheduleDataTick();
+}
+
+void SessionManager::scheduleDataTick() {
+    if (!running_.load()) {
+        return;
+    }
+
+    business_.postDelayed(config_.transport.dataTickMs, [this] { tickData(); });
+}
+
+void SessionManager::onDataDelivered(std::uint32_t sessionId, const char* data, std::size_t size) {
+    touchSession(sessionId);
+
+    DataHandler handler;
+    {
+        std::lock_guard<std::mutex> lock(handlerMutex_);
+        handler = dataHandler_;
+    }
+
+    SessionRecord record;
+    const std::uint32_t peerNodeId = table_.find(sessionId, record) ? record.peerNodeId : 0;
+    if (handler) {
+        handler(sessionId, peerNodeId, data, size);
+    }
+}
+
+void SessionManager::closeWithReason(std::uint32_t sessionId, CloseReason reason) {
+    SessionRecord record;
+    if (!table_.find(sessionId, record)) {
+        return;
+    }
+
+    SessionMessage close;
+    close.type = SessionType::Close;
+    close.sessionId = sessionId;
+    close.nodeId = localNodeId_;
+    close.reason = static_cast<std::uint8_t>(reason);
+    sendMessage(close, record.peerAddress);
+
+    table_.remove(sessionId);
+    streams_->remove(sessionId);
+
+    Log::warning("会话被动关闭 sessionId=", sessionId, " reason=", static_cast<int>(reason));
+    notify(sessionId, record.peerNodeId, Event::Closed);
 }
 
 void SessionManager::notify(std::uint32_t sessionId, std::uint32_t peerNodeId, Event event) {

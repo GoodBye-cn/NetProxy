@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <string>
 
+#include "protocol/Protocol.h"
+
 namespace netproxy::session {
 
 // 会话报文类型。
@@ -18,13 +20,8 @@ enum class RejectReason : std::uint8_t {
     PolicyRejected = 5   // 被策略拒绝
 };
 
-// Close 的原因。
-enum class CloseReason : std::uint8_t {
-    Local = 1,   // 本地主动关闭
-    Remote = 2,  // 收到对端关闭
-    Timeout = 3, // 超时
-    Error = 4    // 内部错误
-};
+// Close 的原因由 protocol 统一提供。
+using protocol::CloseReason;
 
 // Ping 报文的 flags 位：置位表示响应，否则为请求。
 constexpr std::uint16_t SESSION_FLAG_RESPONSE = 0x0001;

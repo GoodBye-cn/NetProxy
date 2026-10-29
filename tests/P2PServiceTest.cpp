@@ -1,6 +1,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <mutex>
+#include <string>
 #include <thread>
 
 #include "P2PService.h"
@@ -24,6 +26,73 @@ void serviceLifecycle() {
 
     service.stop();
     test::checkFalse(service.isRunning(), "服务: 停止后状态正确");
+}
+
+void serviceDataTransfer() {
+    netproxy::P2PServiceConfig configA;
+    configA.nodeId = 0x30303030;
+    configA.dataPort = 9521;
+    configA.announceIntervalMs = 100;
+
+    netproxy::P2PServiceConfig configB = configA;
+    configB.nodeId = 0x40404040;
+    configB.dataPort = 9522;
+
+    netproxy::P2PService serviceA;
+    netproxy::P2PService serviceB;
+
+    std::mutex dataMutex;
+    std::string payload;
+    std::atomic<int> received{0};
+
+    serviceB.setDataHandler(
+        [&dataMutex, &payload, &received](std::uint32_t, std::uint32_t, const char* data, std::size_t size) {
+            {
+                std::lock_guard<std::mutex> lock(dataMutex);
+                payload.assign(data, size);
+            }
+            received.fetch_add(1);
+        });
+
+    test::checkTrue(serviceA.start(configA), "数据: A 启动");
+    test::checkTrue(serviceB.start(configB), "数据: B 启动");
+
+    netproxy::PeerInfo peer;
+    bool discovered = false;
+    for (int attempt = 0; attempt < 40 && !discovered; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        discovered = serviceA.findPeer(configB.nodeId, peer);
+    }
+    test::checkTrue(discovered, "数据: A 发现 B");
+
+    const std::uint32_t sessionId = serviceA.openSession(configB.nodeId);
+    test::checkTrue(sessionId != 0, "数据: 发起会话");
+
+    bool established = false;
+    for (int attempt = 0; attempt < 40 && !established; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        established = serviceA.isSessionEstablished(sessionId);
+    }
+    test::checkTrue(established, "数据: 会话建立");
+
+    test::checkTrue(serviceA.sendData(sessionId, "hello", 5), "数据: 提交成功");
+
+    bool delivered = false;
+    for (int attempt = 0; attempt < 40 && !delivered; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        delivered = received.load() > 0;
+    }
+    test::checkTrue(delivered, "数据: 对端收到");
+
+    {
+        std::lock_guard<std::mutex> lock(dataMutex);
+        test::checkEquals(payload, std::string("hello"), "数据: 内容一致");
+    }
+
+    test::checkFalse(serviceA.sendData(sessionId, nullptr, 0), "数据: 空数据被拒绝");
+
+    serviceA.stop();
+    serviceB.stop();
 }
 
 void serviceSession() {
@@ -93,4 +162,5 @@ void serviceSession() {
 void runP2PServiceTests() {
     NETPROXY_CASE(serviceLifecycle);
     NETPROXY_CASE(serviceSession);
+    NETPROXY_CASE(serviceDataTransfer);
 }

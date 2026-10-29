@@ -9,6 +9,7 @@ add_executable(netproxy_tests
     node/NodeDiscoveryTest.cpp
     node/NodeManagerTest.cpp
     session/SessionTest.cpp
+    transport/DataProtocolTest.cpp
     net/SocketTest.cpp
 )
 

@@ -19,3 +19,5 @@ void runCoreTests();
 void runSessionTests();
 
 void runP2PServiceTests();
+
+void runTransportTests();

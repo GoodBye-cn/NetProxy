@@ -54,6 +54,7 @@ struct P2PService::Impl {
     std::mutex handlerMutex;
     PeerHandler handler;
     SessionHandler sessionHandler;
+    DataHandler dataHandler;
 
     std::uint32_t nodeId = 0;
     std::uint16_t dataPort = 0;
@@ -88,6 +89,21 @@ struct P2PService::Impl {
                 }
             });
     }
+
+    // 把当前数据回调安装到会话模块，调用方需持有 nodeMutex。
+    void installDataHandler() {
+        if (!sessions) {
+            return;
+        }
+
+        DataHandler target;
+        {
+            std::lock_guard<std::mutex> lock(handlerMutex);
+            target = dataHandler;
+        }
+
+        sessions->setDataHandler(target);
+    }
 };
 
 P2PService::P2PService() : impl_(std::make_unique<Impl>()) {}
@@ -112,6 +128,11 @@ bool P2PService::start(const P2PServiceConfig& config) {
     sessionConfig.maxSessionsPerPeer = config.maxSessionsPerPeer;
     sessionConfig.openRetryIntervalMs = config.sessionRetryIntervalMs;
     sessionConfig.openRetryCount = config.sessionRetryCount;
+    sessionConfig.transport.maxPayloadSize = config.maxPayloadSize;
+    sessionConfig.transport.sendWindow = config.sendWindow;
+    sessionConfig.transport.receiveWindow = config.receiveWindow;
+    sessionConfig.transport.retransmitTimeoutMs = config.retransmitTimeoutMs;
+    sessionConfig.transport.maxRetransmitCount = config.maxRetransmitCount;
 
     std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
 
@@ -151,6 +172,7 @@ bool P2PService::start(const P2PServiceConfig& config) {
     impl_->sessions =
         std::make_unique<session::SessionManager>(*impl_->channel, resolver, nodeId, sessionConfig, impl_->business);
     impl_->installSessionHandler();
+    impl_->installDataHandler();
 
     if (!impl_->sessions->start()) {
         impl_->sessions.reset();
@@ -320,6 +342,29 @@ void P2PService::setSessionHandler(SessionHandler handler) {
         impl_->sessionHandler = std::move(handler);
     }
     impl_->installSessionHandler();
+}
+
+void P2PService::setDataHandler(DataHandler handler) {
+    std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
+    {
+        std::lock_guard<std::mutex> handlerLock(impl_->handlerMutex);
+        impl_->dataHandler = std::move(handler);
+    }
+    impl_->installDataHandler();
+}
+
+bool P2PService::sendData(std::uint32_t sessionId, const void* data, std::size_t size) {
+    session::SessionManager* sessions = nullptr;
+    {
+        std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
+        sessions = impl_->sessions.get();
+    }
+
+    if (sessions == nullptr) {
+        return false;
+    }
+
+    return sessions->send(sessionId, data, size);
 }
 
 } // namespace netproxy

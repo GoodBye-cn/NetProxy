@@ -72,10 +72,10 @@ classDiagram
     }
 
     class DataStreamManager {
-        -DataChannel& channel_
-        -SessionConfig config_
-        -TaskLoop& business_
-        -unordered_map~uint32, unique_ptr~DataStream~~ streams_
+        -Sender sender_
+        -uint32 localNodeId_
+        -TransportConfig config_
+        -unordered_map~uint32, shared_ptr~DataStream~~ streams_
         -Delivered delivered_
         -Closed closed_
         +create(uint32, uint32, IPAddress) void
@@ -245,7 +245,7 @@ public:
     using Closed = std::function<void(CloseReason reason)>;
 
     DataStream(std::uint32_t sessionId, std::uint32_t peerNodeId, const net::IPAddress& peer,
-               const SessionConfig& config, Sender sender);
+               std::uint32_t localNodeId, const TransportConfig& config, Sender sender);
     ~DataStream();
 
     DataStream(const DataStream&) = delete;
@@ -399,7 +399,7 @@ public:
     using Delivered = std::function<void(std::uint32_t sessionId, const char* data, std::size_t size)>;
     using Closed = std::function<void(std::uint32_t sessionId, CloseReason reason)>;
 
-    DataStreamManager(DataChannel& channel, const SessionConfig& config, core::TaskLoop& business);
+    DataStreamManager(Sender sender, std::uint32_t localNodeId, const TransportConfig& config);
     ~DataStreamManager();
 
     DataStreamManager(const DataStreamManager&) = delete;
@@ -434,11 +434,11 @@ public:
     void setClosedHandler(Closed handler);
 
 private:
-    DataChannel& channel_;
-    SessionConfig config_;
-    core::TaskLoop& business_;
+    Sender sender_;
+    std::uint32_t localNodeId_ = 0;
+    TransportConfig config_;
 
-    std::unordered_map<std::uint32_t, std::unique_ptr<DataStream>> streams_;
+    std::unordered_map<std::uint32_t, std::shared_ptr<DataStream>> streams_;
     Delivered delivered_;
     Closed closed_;
 };

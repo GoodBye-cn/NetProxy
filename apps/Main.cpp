@@ -32,7 +32,8 @@ void printUsage(const char* program) {
 }
 
 void printCommands() {
-    netproxy::Log::warning("命令: open <nodeId> | close <sessionId> | sessions | peers | quit");
+    netproxy::Log::warning(
+        "命令: open <nodeId> | close <sessionId> | send <sessionId> <text> | sessions | peers | quit");
 }
 
 bool parseUInt(const char* text, unsigned long& value) {
@@ -87,6 +88,27 @@ void handleCommand(netproxy::P2PService& service, const std::string& line) {
             netproxy::Log::info("已关闭会话 sessionId=", sessionId);
         } else {
             netproxy::Log::warning("关闭会话失败 sessionId=", sessionId);
+        }
+        return;
+    }
+
+    if (command == "send") {
+        unsigned long sessionId = 0;
+        if (!(stream >> sessionId)) {
+            printCommands();
+            return;
+        }
+
+        std::string text;
+        std::getline(stream, text);
+        if (!text.empty() && text.front() == ' ') {
+            text.erase(0, 1);
+        }
+
+        if (service.sendData(static_cast<std::uint32_t>(sessionId), text.data(), text.size())) {
+            netproxy::Log::info("已提交数据 sessionId=", sessionId, " 长度=", text.size());
+        } else {
+            netproxy::Log::warning("提交数据失败 sessionId=", sessionId);
         }
         return;
     }
@@ -215,6 +237,10 @@ int main(int argc, char* argv[]) {
     netproxy::P2PService service;
     service.setPeerHandler([](const netproxy::PeerInfo& peer) {
         netproxy::Log::info("发现节点 nodeId=", peer.nodeId, " ", peer.address, ":", peer.port);
+    });
+    service.setDataHandler([](std::uint32_t id, std::uint32_t peerNodeId, const char* data, std::size_t size) {
+        netproxy::Log::info("收到数据 sessionId=", id, " 对端=", peerNodeId, " 长度=", size,
+                            " 内容=", std::string(data, size));
     });
     service.setSessionHandler(
         [&openTarget, &sessionId](std::uint32_t id, std::uint32_t peerNodeId, netproxy::SessionEvent event) {
