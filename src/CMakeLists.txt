@@ -14,13 +14,10 @@ add_library(netproxy
     node/NodeManager.cpp
     node/NodeProtocol.cpp
     node/PeerTable.cpp
-    session/DataChannel.cpp
-    session/SessionManager.cpp
-    session/SessionProtocol.cpp
-    session/SessionTable.cpp
-    transport/DataProtocol.cpp
-    transport/DataStream.cpp
-    transport/DataStreamManager.cpp
+    transport/DataChannel.cpp
+    transport/PeerConnection.cpp
+    transport/PeerConnectionManager.cpp
+    transport/PeerProtocol.cpp
 )
 
 find_package(Threads REQUIRED)

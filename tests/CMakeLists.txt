@@ -8,8 +8,8 @@ add_executable(netproxy_tests
     net/PollerTest.cpp
     node/NodeDiscoveryTest.cpp
     node/NodeManagerTest.cpp
-    session/SessionTest.cpp
-    transport/DataProtocolTest.cpp
+    transport/PeerConnectionTest.cpp
+    transport/PeerProtocolTest.cpp
     net/SocketTest.cpp
 )
 

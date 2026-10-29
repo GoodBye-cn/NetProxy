@@ -6,8 +6,7 @@ C++17 网络代理项目，使用 CMake 构建。Linux 使用 Clang，Windows �
 
 - [docs/architecture.md](docs/architecture.md)：线程模型、类图、各模块接口
 - [docs/discovery-protocol.md](docs/discovery-protocol.md)：组播发现协议
-- [docs/session-protocol.md](docs/session-protocol.md)：会话信令协议
-- [docs/transport-protocol.md](docs/transport-protocol.md)：数据传输与可靠传输模块
+- [docs/peer-protocol.md](docs/peer-protocol.md)：连接与流协议
 
 ## 目录结构
 
@@ -18,7 +17,8 @@ C++17 网络代理项目，使用 CMake 构建。Linux 使用 Clang，Windows �
 | `src/net/` | 内部套接字与 poll 封装 |
 | `src/core/` | I/O 线程与业务线程循环 |
 | `src/node/` | 节点管理器、组播发现通道与节点表 |
-| `src/session/` | 数据通道、会话信令与状态机 |
+| `src/transport/` | 连接、流与可靠传输 |
+| `src/protocol/` | 连接协议常量与类型 |
 | `apps/` | 可执行程序 |
 | `tests/` | 测试 |
 | `docs/` | 文档 |
@@ -117,7 +117,7 @@ discovery.announce();                     // 周期调用，建议 3 秒一次
 
 ## P2P 服务
 
-`include/P2PService.h` 是对外入口，内部封装了组播发现、节点表、会话状态机与两个工作线程，外部只需包含这一个头文件。
+`include/P2PService.h` 是对外入口，内部封装了组播发现、节点表、连接与流、以及两个工作线程，外部只需包含这一个头文件。
 
 ```cpp
 #include "P2PService.h"
@@ -130,30 +130,35 @@ netproxy::P2PService service;
 service.setPeerHandler([](const netproxy::PeerInfo& peer) {
     // 发现新节点，运行在业务线程
 });
-service.setSessionHandler([](std::uint32_t sessionId, netproxy::SessionEvent event) {
+service.setStreamHandler([](std::uint32_t streamId, std::uint32_t peerNodeId,
+                            netproxy::StreamEvent event, std::uint8_t reason) {
     // Opened / Rejected / Closed
+});
+service.setDataHandler([](std::uint32_t streamId, std::uint32_t peerNodeId,
+                          const char* data, std::size_t size) {
+    // 收到数据，运行在业务线程
 });
 
 if (!service.start(config)) {
     return 1;
 }
 
-const std::uint32_t sessionId = service.openSession(peerNodeId);  // 0 表示失败
-bool established = service.isSessionEstablished(sessionId);
-service.closeSession(sessionId);
+const std::uint32_t streamId = service.openStream(peerNodeId);  // 0 表示失败
+service.sendData(streamId, data, size);
+service.closeStream(streamId);
 
 service.stop();
 ```
 
-- 配置覆盖节点标识、数据端口、绑定地址、组播组与端口、公告周期、会话上限与重试参数
-- `openSession` 非阻塞，立即返回会话标识；返回非 0 不代表对端可达，对端未知、超限或拒绝都会回调 `Rejected`
-- `SessionHandler` 参数为 `(sessionId, peerNodeId, event)`，在业务线程执行
-- `sessions()` 返回当前会话快照，包含握手中与会话状态
+- 配置覆盖节点标识、数据端口、绑定地址、组播组与端口、公告周期、流上限与连接重试参数
+- `openStream` 自动确保连接：未连接时先发 Hello，连接就绪后补发 StreamOpen
+- 返回非 0 不代表对端可达，超限或拒绝都会回调 `Rejected`
+- `StreamHandler` 参数为 `(streamId, peerNodeId, event, reason)`，在业务线程执行
 - 回调运行在业务线程，不能执行阻塞操作，也不要调用 `stop()`
 
 ### 测试程序
 
-`netproxy_cli` 启动后进入交互模式，可以手动建立与断开会话：
+`netproxy_cli` 启动后进入交互模式，可以手动开流与发送数据：
 
 ```bash
 ./build/linux-clang/bin/netproxy_cli --node-id 1 --port 7001
@@ -161,14 +166,14 @@ service.stop();
 
 | 命令 | 说明 |
 | --- | --- |
-| `open <nodeId>` | 向已发现的节点发起会话 |
-| `close <sessionId>` | 断开会话 |
-| `send <sessionId> <text>` | 向会话发送一条数据 |
-| `sessions` | 列出当前会话 |
+| `open <nodeId>` | 向已发现的节点开流 |
+| `close <streamId>` | 关闭流 |
+| `send <streamId> <text>` | 向流发送一条数据 |
+| `streams` | 列出当前流 |
 | `peers` | 列出已发现节点 |
 | `quit` | 退出 |
 
-两个终端分别启动 `--node-id 1` 与 `--node-id 2`，在其中一个执行 `open 2`，双方日志会打印 `会话已建立`。
+两个终端分别启动 `--node-id 1` 与 `--node-id 2`，在其中一个执行 `open 2`，双方日志会打印 `流已打开`。
 
 ## 节点管理器
 
@@ -211,35 +216,38 @@ discovery.close();
 - 公告与淘汰在业务线程执行，发送通过 `IoLoop::post()` 回到 I/O 线程
 - 停止顺序：业务线程 → I/O 线程 → `NodeManager` → `NodeDiscovery`
 
-## 会话
+## 连接与流
 
-`src/session/SessionManager` 在 `DataChannel` 上建立会话，同一对节点可有多条，用 `sessionId` 区分。它不持有 socket，也不依赖节点管理器：报文由 `DataChannel` 推入，对端地址通过 `PeerResolver` 查询。
+`src/transport/` 负责连接与流：每个节点对一条可靠连接，上层业务直接在连接上开流，不再有独立的会话层。
 
 ```cpp
-#include "session/DataChannel.h"
-#include "session/SessionManager.h"
+#include "transport/DataChannel.h"
+#include "transport/PeerConnectionManager.h"
 
-netproxy::session::DataChannel channel(io);
+netproxy::transport::DataChannel channel(io);
 channel.open("0.0.0.0", 7001);
 
-auto resolver = [&manager](std::uint32_t nodeId, netproxy::PeerInfo& peer) {
-    return manager.findPeer(nodeId, peer);
-};
+netproxy::transport::PeerConfig peerConfig;
+netproxy::transport::PeerConnectionManager connections(channel, 0x12345678, peerConfig, business);
+connections.start();
 
-netproxy::session::SessionConfig config;
-netproxy::session::SessionManager sessions(channel, resolver, 0x12345678, config, business);
-sessions.start();
+netproxy::PeerInfo peer;
+if (!node.findPeer(peerNodeId, peer)) {
+    return;
+}
 
-const std::uint32_t sessionId = sessions.open(peerNodeId);   // 0 表示失败
-sessions.isEstablished(sessionId);
-sessions.close(sessionId);
+const std::uint32_t streamId =
+    connections.openStream(peerNodeId, netproxy::net::IPAddress::parse(peer.address, peer.port));
+connections.sendData(streamId, data, size);
+connections.closeStream(streamId);
 ```
 
-- 报文 fixed 头：`NPSN` magic + version + type + flags + `sessionId`，之后按类型追加字段
-- 类型：`Open` / `Accept` / `Reject` / `Close` / `Ping`，Open 携带 `nodeId`、数据端口与 `nonce`
-- 握手失败按 `openRetryIntervalMs` 重发，超过 `openRetryCount` 后回调 `Rejected`
+- 握手：`Hello` / `HelloAck` / `HelloReject`，裸 UDP 重发，协议版本 2
+- 连接：连接级序号、累计 ACK、窗口、重传，所有帧（含 `StreamClose`）都走可靠层
+- 流：`StreamOpen` / `StreamAccept` / `StreamReject` / `StreamClose`，`streamId` 为连接内唯一标识
+- 心跳：连接级 `Ping`，空闲 30 秒发送，连续 3 次失败判定断链
 - 事件回调 `Opened` / `Rejected` / `Closed` 在业务线程执行
-- 单对节点会话数、总会话数由 `SessionConfig` 限制，超限时对端回 `Reject`
+- 协议细节见 [docs/peer-protocol.md](docs/peer-protocol.md)
 
 ## 构建
 

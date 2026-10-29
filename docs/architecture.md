@@ -4,7 +4,7 @@
 
 - 单进程、双线程：一个 I/O 线程处理所有 socket，一个业务线程处理状态与逻辑。
 - 节点通过 UDP 组播发现彼此，发现结果保存在节点表中。
-- 会话建立在数据端口上，每对节点之间可有多个会话，用 `sessionId` 区分。
+- 连接建立在数据端口上，每对节点一条连接；连接上可开多条流，用 `streamId` 区分。
 - 线程之间只通过消息投递通信，socket 与业务状态各自单线程独占。
 
 ## 2. 线程模型
@@ -12,7 +12,7 @@
 | 线程 | 职责 | 独占资源 |
 | --- | --- | --- |
 | I/O 线程 | `poll` 等待、`recvfrom` / `sendto`、`accept`、报文编解码 | 全部 socket、`EventDispatcher`、`Poller`、`WakeupChannel` |
-| 业务线程 | 节点表维护、会话状态机、定时任务、应用回调 | `PeerTable`、`SessionTable`、定时器 |
+| 业务线程 | 节点表维护、连接与流状态机、定时任务、应用回调 | `PeerTable`、连接表、定时器 |
 
 两条规则：
 
@@ -187,82 +187,61 @@ classDiagram
         -tick() void
     }
 
-    class SessionMessage {
-        +SessionType type
-        +uint32 sessionId
-        +uint32 nodeId
-        +uint32 nonce
-        +uint16 listenPort
-        +encode() string
-        +decode(void*, size_t, SessionMessage&) bool
-    }
-
-    class SessionTable {
-        -unordered_map~uint32, SessionRecord~ sessions_
-        +insert(SessionRecord) bool
-        +find(uint32, SessionRecord&) bool
-        +remove(uint32) bool
-        +removeExpired(steady_clock::time_point) size_t
-        +count() size_t
-    }
-
-    class SessionManager {
-        -SessionConfig config_
-        -SessionTable table_
+    class PeerConnectionManager {
         -DataChannel& channel_
-        -PeerResolver resolver_
         -uint32 localNodeId_
+        -PeerConfig config_
         -TaskLoop& business_
-        -unique_ptr~DataStreamManager~ streams_
-        -Handler handler_
+        -unordered_map~uint32, shared_ptr~PeerConnection~~ connections_
+        -unordered_map~uint32, vector~uint32~~ pendingStreams_
+        -StreamHandler streamHandler_
         -DataHandler dataHandler_
         +start() bool
         +stop() void
-        +open(uint32) uint32
-        +close(uint32) bool
-        +isEstablished(uint32) bool
-        +send(uint32, void*, size_t) bool
-        +setHandler(Handler) void
+        +connect(uint32, IPAddress) bool
+        +openStream(uint32, uint32) bool
+        +closeStream(uint32, uint32) bool
+        +sendData(uint32, uint32, void*, size_t) bool
+        +isConnected(uint32) bool
+        +setStreamHandler(StreamHandler) void
         +setDataHandler(DataHandler) void
-        +onMessage(IPAddress, SessionMessage) void
-        -tickData() void
-        -closeWithReason(uint32, CloseReason) void
+        -onDatagram(IPAddress, char*, size_t) void
+        -tick() void
     }
 
-    class DataStreamManager {
-        -DataChannel& channel_
-        -SessionConfig config_
-        -TaskLoop& business_
-        -unordered_map~uint32, unique_ptr~DataStream~~ streams_
-        +create(uint32, uint32, IPAddress) void
-        +remove(uint32) void
-        +send(uint32, void*, size_t) bool
-        +onDatagram(IPAddress, char*, size_t) void
-        +tick() void
-        +setDeliveredHandler(Delivered) void
-        +setClosedHandler(Closed) void
-    }
-
-    class DataStream {
+    class PeerConnection {
+        -uint32 peerNodeId_
+        -uint32 localNodeId_
+        -IPAddress peer_
+        -PeerConfig config_
+        -Sender sender_
+        -ConnectionState state_
+        -uint32 helloNonce_
+        -int helloRetries_
         -uint32 sendNext_
         -uint32 sendBase_
         -uint32 peerWindow_
-        -deque~PendingSegment~ sendQueue_
+        -deque~PendingFrame~ sendQueue_
         -uint32 receiveNext_
-        -map~uint32, string~ receiveBuffer_
-        +send(void*, size_t) bool
-        +onData(DataMessage) void
-        +onAck(DataMessage) void
+        -map~uint32, PeerFrame~ receiveBuffer_
+        -unordered_map~uint32, StreamState~ streams_
+        -int pingMisses_
+        +open() bool
+        +close(uint8) void
+        +onFrame(PeerFrame) void
+        +onHelloAck(PeerFrame) void
         +tick(time_point) void
+        +openStream(uint32) bool
+        +closeStream(uint32) bool
+        +sendData(uint32, void*, size_t) bool
+        +isConnected() bool
     }
 
-    class DataMessage {
-        +uint32 sequence
-        +uint32 acknowledge
-        +uint16 window
-        +uint16 payloadLength
-        +encodePacket() string
-        +decodePacket(void*, size_t, DataMessage&) bool
+    class PeerProtocol {
+        +encodeHello(HelloMessage) string
+        +decodeHello(void*, size_t, HelloMessage&) bool
+        +encodeFrame(PeerFrame) string
+        +decodeFrame(void*, size_t, PeerFrame&) bool
     }
 
     IoLoop *-- EventDispatcher
@@ -277,15 +256,11 @@ classDiagram
     NodeDiscovery --> UDPSocket
     NodeDiscovery ..> PeerInfo
     DataChannel --> UDPSocket
-    SessionManager *-- SessionTable
-    SessionManager *-- DataStreamManager
-    SessionManager --> DataChannel
-    SessionManager --> TaskLoop
-    SessionManager ..> SessionMessage
-    SessionTable o-- SessionRecord
-    DataStreamManager --> DataChannel
-    DataStreamManager *-- DataStream
-    DataStream ..> DataMessage
+    PeerConnectionManager *-- PeerConnection
+    PeerConnectionManager --> DataChannel
+    PeerConnectionManager --> TaskLoop
+    PeerConnectionManager ..> PeerProtocol
+    PeerConnection ..> PeerProtocol
 ```
 
 ## 4. 类接口
@@ -694,247 +669,20 @@ private:
 
 `NodeManager` 不再创建或持有任何 socket：收到公告由 `NodeDiscovery` 回调推入，发送公告通过 `IoLoop::post` 调用 `channel_.announce()`。
 
-### 4.4 session 模块 [设计]
+### 4.4 transport 模块 [设计]
 
-#### DataChannel
-
-`DataChannel` 定义在 `src/session/DataChannel.h`，负责数据 UDP socket 的生命周期、读事件注册与发送投递，不解析报文。
-
-```cpp
-class DataChannel final {
-public:
-    using Receiver = std::function<void(const net::IPAddress& from, const char* data, std::size_t size)>;
-
-    explicit DataChannel(IoLoop& io);
-    ~DataChannel();
-
-    bool open(const std::string& bindAddress, std::uint16_t port);
-    void close();
-    bool isOpen() const;
-
-    std::uint16_t localPort() const;
-
-    bool setReceiver(Receiver receiver);   // 注册读事件，需在 IoLoop 启动前调用
-    void send(const std::string& packet, const net::IPAddress& target);
-
-private:
-    void handleReadable();
-
-    IoLoop& io_;
-    net::UDPSocket socket_;
-    Receiver receiver_;
-    bool registered_ = false;
-};
-```
-
-#### SessionMessage
-
-报文逐字段说明、校验规则与示例见 [session-protocol.md](session-protocol.md)。
-
-```cpp
-enum class SessionType : std::uint8_t {
-    Open = 1,
-    Accept = 2,
-    Reject = 3,
-    Close = 4,
-    Ping = 5,
-    Data = 6,
-    Ack = 7
-};
-
-struct SessionMessage {
-    static constexpr std::size_t HEADER_SIZE = 16;
-
-    SessionType type = SessionType::Open;
-    std::uint16_t flags = 0;       // Ping 用 SESSION_FLAG_RESPONSE 区分请求与响应
-    std::uint32_t nodeId = 0;      // 发送方节点标识，每条报文都带
-    std::uint32_t sessionId = 0;
-    std::uint32_t nonce = 0;
-    std::uint16_t listenPort = 0;
-    std::uint8_t reason = 0;
-
-    std::string encode() const;
-    static bool decode(const void* data, std::size_t size, SessionMessage& message);
-};
-
-// 数据报文在通用头之后扩展序号与确认字段，不与信令共用结构体
-struct SessionDataMessage {
-    static constexpr std::size_t HEADER_SIZE = 28;
-
-    SessionType type = SessionType::Data;   // Data / Ack
-    std::uint32_t nodeId = 0;
-    std::uint32_t sessionId = 0;
-    std::uint32_t sequence = 0;
-    std::uint32_t acknowledge = 0;
-    std::uint16_t window = 0;
-    std::uint16_t payloadLength = 0;
-
-    std::string encode() const;
-    static bool decode(const void* data, std::size_t size, SessionDataMessage& message);
-};
-```
-
-报文布局：
-
-| 偏移 | 长度 | 字段 | 说明 |
-| --- | --- | --- | --- |
-| 0 | 4 | magic `NPSN` | |
-| 4 | 1 | version | 当前为 1 |
-| 5 | 1 | type | 1~7 |
-| 6 | 2 | flags | 保留 |
-| 8 | 4 | nodeId | 发送方节点标识，每条报文都带 |
-| 12 | 4 | sessionId | 会话标识 |
-| 16 | — | 类型负载 | 见下 |
-
-类型负载：
-
-| 类型 | 偏移 16 起 |
-| --- | --- |
-| Open | `listenPort(2) + reserved(2) + nonce(4)`，共 24 字节 |
-| Accept | `nonce(4)`，共 20 字节 |
-| Reject / Close | `reason(1) + reserved(3)`，共 20 字节 |
-| Ping | 无，共 16 字节 |
-| Data / Ack | 见 [session-protocol.md](session-protocol.md) |
-
-#### SessionState / SessionRecord
-
-```cpp
-enum class SessionState : std::uint8_t {
-    Opening = 1,
-    Established = 2,
-    Closing = 3,
-    Closed = 4
-};
-
-struct SessionRecord {
-    std::uint32_t sessionId = 0;
-    std::uint32_t peerNodeId = 0;
-    net::IPAddress peerAddress;
-    SessionState state = SessionState::Opening;
-    std::uint32_t nonce = 0;
-    int retryCount = 0;
-    std::chrono::steady_clock::time_point deadline;
-};
-```
-
-#### SessionConfig
-
-```cpp
-struct SessionConfig {
-    std::size_t maxSessions = 64;
-    std::size_t maxSessionsPerPeer = 8;
-    int openRetryIntervalMs = 1000;
-    int openRetryCount = 5;
-    int closeTimeoutMs = 2000;
-
-    // 保活：空闲到达 interval 后发 Ping，每次等 timeout，连续失败 retryCount 次判定断链
-    int keepaliveIntervalMs = 30000;
-    int keepaliveTimeoutMs = 10000;
-    int keepaliveRetryCount = 3;
-    int keepaliveTickMs = 1000;
-};
-```
-
-#### SessionTable
-
-```cpp
-class SessionTable final {
-public:
-    bool insert(const SessionRecord& record);
-    bool find(std::uint32_t sessionId, SessionRecord& record) const;
-    bool remove(std::uint32_t sessionId);
-    std::size_t count() const;
-    std::size_t countForPeer(std::uint32_t peerNodeId) const;
-    std::size_t removeExpired(std::chrono::steady_clock::time_point now);
-};
-```
-
-业务线程独占，不加锁。
-
-#### SessionManager
-
-```cpp
-class SessionManager final {
-public:
-    enum class Event {
-        Opened,
-        Rejected,
-        Closed
-    };
-
-    using Handler = std::function<void(std::uint32_t sessionId, std::uint32_t peerNodeId, Event event)>;
-
-    // 查询对端地址，返回 false 表示节点未知
-    using PeerResolver = std::function<bool(std::uint32_t nodeId, PeerInfo& peer)>;
-
-    SessionManager(DataChannel& channel, PeerResolver resolver, std::uint32_t localNodeId,
-                   const SessionConfig& config, TaskLoop& business);
-    ~SessionManager();
-
-    SessionManager(const SessionManager&) = delete;
-    SessionManager& operator=(const SessionManager&) = delete;
-
-    // 设置数据通道回调；需在 IoLoop 启动前调用
-    bool start();
-    void stop();
-
-    // 任意线程调用：立即分配并返回会话标识，握手在业务线程异步进行
-    // 返回 0 只表示模块未启动或参数非法；对端未知、超限、拒绝都走 Rejected 回调
-    std::uint32_t open(std::uint32_t peerNodeId);
-
-    bool close(std::uint32_t sessionId);
-    bool isEstablished(std::uint32_t sessionId) const;
-
-    // 提交一条数据，长度不超过 maxPayloadSize；只投递到对应 DataStream
-    bool send(std::uint32_t sessionId, const void* data, std::size_t size);
-
-    void setHandler(Handler handler);
-
-    // 设置数据交付回调，运行在业务线程
-    void setDataHandler(DataHandler handler);
-
-    // I/O 线程读到数据报文后投递；信令报文走 onMessage
-    void onDatagram(const net::IPAddress& from, const char* data, std::size_t size);
-    void onMessage(const net::IPAddress& from, const SessionMessage& message);
-
-private:
-    void handleIncoming();                   // I/O 线程回调，读取并投递
-    void sendMessage(const SessionMessage& message, const net::IPAddress& target);
-    void scheduleRetry(std::uint32_t sessionId);
-    void handleOpen(const net::IPAddress& from, const SessionMessage& message);
-    void handleAccept(const net::IPAddress& from, const SessionMessage& message);
-    void handleReject(const SessionMessage& message);
-    void handleClose(const SessionMessage& message);
-    void tickData();                         // 重传检查，业务线程
-    void closeWithReason(std::uint32_t sessionId, CloseReason reason);
-
-    SessionConfig config_;
-    SessionTable table_;
-    DataChannel& channel_;
-    PeerResolver resolver_;
-    std::uint32_t localNodeId_ = 0;
-    TaskLoop& business_;
-    std::unique_ptr<transport::DataStreamManager> streams_;
-    Handler handler_;
-    DataHandler dataHandler_;
-};
-```
-
-`SessionManager` 持有 `DataChannel`（信令与数据共用），只通过 `PeerResolver` 查询对端地址；数据报文交给 `DataStreamManager`，自身不处理序号、窗口与重传。
-
-### 4.5 transport 模块 [设计]
-
-负责数据报文与可靠传输，不持有 socket，不依赖 session。报文格式、类接口与可靠性流程见 [transport-protocol.md](transport-protocol.md)。
+负责连接与流：握手、连接级可靠传输、多路复用、心跳。不依赖 session。协议与类细节见 [peer-protocol.md](peer-protocol.md)。
 
 | 类 | 职责 | 关键接口 |
 | --- | --- | --- |
-| `DataMessage` | Data / Ack 编解码 | `encodePacket()` / `decodePacket()` |
-| `DataStream` | 单会话序号、窗口、重传、按序交付 | `send` / `onData` / `onAck` / `tick` |
-| `DataStreamManager` | 按 `sessionId` 管理 `DataStream` | `create` / `remove` / `send` / `onDatagram` / `tick` |
+| `PeerProtocol` | 握手报文与连接帧编解码 | `encodeHello` / `decodeHello` / `encodeFrame` / `decodeFrame` |
+| `PeerConnection` | 单连接：握手、序号、窗口、重传、流表、心跳 | `open` / `onFrame` / `tick` / `openStream` / `sendData` |
+| `PeerConnectionManager` | 按 `peerNodeId` 管理连接与报文分发 | `connect` / `openStream` / `sendData` / `onDatagram` |
+| `DataChannel` | 数据 UDP socket | `open` / `setReceiver` / `send` |
 
-`DataStreamManager` 由 `SessionManager` 持有：会话 `Established` 时 `create`，`Closed` 时 `remove`；`DataStream` 重传耗尽时通过 `Closed` 回调触发 `SessionManager::closeWithReason`。
+`P2PService` 通过 `PeerConnectionManager` 开流与发数据，连接层通过 `StreamHandler` / `DataHandler` 把事件与数据推回业务层。
 
-### 4.6 应用层组装
+### 4.5 应用层组装
 
 对外只暴露 `P2PService`，内部按依赖顺序组装：
 
@@ -947,12 +695,12 @@ class P2PService {
         std::unique_ptr<DataChannel> channel;
         std::unique_ptr<NodeDiscovery> discovery;
         std::unique_ptr<NodeManager> node;
-        std::unique_ptr<SessionManager> sessions;
+        std::unique_ptr<PeerConnectionManager> connections;
     };
 };
 ```
 
-`NodeManager` 的 `PeerResolver` 由 `P2PService` 提供，内部转调 `node->findPeer()`。
+`P2PService` 用 `node->findPeer()` 拿到对端地址后调用 `connections->openStream()`；连接层不感知会话语义，流即通道。
 
 ## 5. 线程间数据流
 
@@ -971,53 +719,58 @@ NodeDiscovery 收到公告并解析
   channel.announce()               <──────  io.post(announce)
 ```
 
-### 5.2 会话建立
+### 5.2 连接与开流
 
 ```
 业务线程                                      I/O 线程
-sessions.open(nodeId)
-  ├─ resolver 查询对端地址
-  ├─ 生成 sessionId / nonce
-  ├─ table.insert(Opening)
-  ├─ channel.send(Open)          ─────>  dataSocket.sendTo(Open)
-  └─ business.postDelayed(重传)
-数据 socket 可读  <──────────────────────────
-  channel receiver 解析后投递  ─────>  业务线程 onMessage
-  ├─ 校验 nonce
-  ├─ Opening → Established
-  └─ handler(sessionId, Opened)
+openStream(peerNodeId)
+  ├─ 查节点表得到地址
+  ├─ 未连接 → connections.connect()，发 Hello ──> dataSocket.sendTo(Hello)
+  ├─ 连接 Connecting → 流进入等待队列
+  └─ 连接 Connected → 发 StreamOpen ────────────> dataSocket.sendTo(StreamOpen)
+
+数据 socket 可读  <──────────────────────────────
+  PeerConnectionManager.onDatagram
+  ├─ Hello → 复用或创建连接，回 HelloAck
+  ├─ HelloAck → 连接 Connected，补发排队流
+  └─ 连接帧 → PeerConnection.onFrame
+       ├─ StreamOpen → 回 StreamAccept → streamHandler(Opened)
+       └─ StreamAccept → 流 Open → streamHandler(Opened)
 ```
 
-### 5.3 会话关闭
+### 5.3 关流与关连接
 
 ```
-业务线程：close(sessionId)
-  ├─ 状态置 Closing
-  ├─ io.post(send Close)
-  └─ business.postDelayed(closeTimeout)
-对端收到 Close → 删除会话 → handler(Closed)
-本端超时 → 删除会话 → handler(Closed)
+业务线程：closeStream(streamId)
+  ├─ 找到所属连接
+  └─ PeerConnection 发 StreamClose（可靠队列，自动重传）
+对端收到 StreamClose → 删除流 → 回调 Closed
+本端流删除 → 回调 Closed
+
+无流且空闲超时 / 心跳失败
+  └─ 连接发 Close → 关闭所有流 → 逐个回调 Closed
 ```
+
+`StreamClose` 与数据帧同等可靠，不再依赖超时收敛。
 
 ### 5.4 数据传输
 
 ```
 业务线程                                      I/O 线程
-sendData(sessionId, data)
-  ├─ 查 streams_ 得到 DataStream
-  ├─ 校验长度、窗口，分配 sequence
-  ├─ 入 sendQueue，构造 Data 报文
-  └─ channel.send ─────────────────────>  dataSocket.sendTo(Data)
+sendData(streamId, data)
+  ├─ 找到所属连接与流
+  ├─ PeerConnection 分配 connectionSeq、入 sendQueue
+  └─ channel.send(Data) ──────────────────────> dataSocket.sendTo(Data)
 
-数据 socket 可读  <──────────────────────────
-  SessionManager 只读 type（6 / 7）
-  business.post(packet)  ─────>  DataStreamManager.onDatagram
-                                  ├─ 按序交付 DataHandler
-                                  └─ 回 Ack
+数据 socket 可读  <──────────────────────────────
+  PeerConnectionManager.onDatagram
+  └─ PeerConnection.onFrame
+       ├─ 按连接序号去重与排序
+       └─ dataHandler(streamId, peerNodeId, payload)
 ```
 
-- 数据报文与信令共用数据 socket，靠 `type` 分流
-- 可靠性状态（序号、窗口、重传）全部在 `DataStream` 内，业务线程独占
+- 数据与握手共用数据 socket，靠 `type` 区分：1~3 握手，10~16 连接帧
+- 可靠性状态（序号、窗口、重传）全部在 `PeerConnection` 内，业务线程独占
 - 发送走 `DataChannel::send`，内部 `io.post` 回到 I/O 线程
 
 ## 6. 启动与停止顺序
@@ -1029,7 +782,7 @@ sendData(sessionId, data)
 2. DataChannel 构造并 open()，绑定数据端口并回填真实端口
 3. NodeDiscovery 构造并 open(dataPort)，绑定组播、注册读事件
 4. NodeManager 构造（注入 NodeDiscovery），start() 设置 receiver 与定时
-5. SessionManager 构造（注入 DataChannel + PeerResolver），start()
+5. PeerConnectionManager 构造（注入 DataChannel），start() 接管数据 socket
 6. io.start()
 7. business.start()
 ```
@@ -1037,10 +790,10 @@ sendData(sessionId, data)
 停止：
 
 ```
-1. business.stop()       // 停止业务线程，等待队列排空
-2. io.stop()             // 停止 I/O 线程
-3. sessions.stop()       // 注销数据通道回调，清空会话表
-4. node.stop()           // 取消定时任务
+1. business.stop()         // 停止业务线程，等待队列排空
+2. io.stop()               // 停止 I/O 线程
+3. connections.stop()      // 关闭全部连接与流，回调 Closed
+4. node.stop()             // 取消定时任务
 5. 关闭 DataChannel / NodeDiscovery
 ```
 
@@ -1054,7 +807,7 @@ sendData(sessionId, data)
 | 组播加入失败 | 回滚数据通道，`start()` 返回 false |
 | 会话数超限 | 返回 0，向对端发 Reject（reason=1） |
 | 对端无响应 | 重传耗尽，`handler(Rejected)` |
-| 收到未知 sessionId 的 Accept | 丢弃并记录 Warning |
+| 收到未知 streamId 的 StreamAccept | 丢弃并记录 Warning |
 | I/O 线程 poll 失败 | 记录 Error，退出循环，由应用决定是否重启 |
 
 所有失败路径使用 `Log::warning` / `Log::error`，关键正常路径使用 `Log::debug`。
@@ -1064,7 +817,8 @@ sendData(sessionId, data)
 | 方向 | 说明 |
 | --- | --- |
 | 多 Reactor | `IoLoop` 内部支持多个 `EventDispatcher`，按 fd 取模分片 |
-| 工作线程池 | 业务线程拆成多个，按 `nodeId` 或 `sessionId` 分片，避免状态锁 |
-| 会话数据通道 | 在 `SessionMessage` 增加 `Data` 类型与序号，补可靠传输 |
+| 工作线程池 | 业务线程拆成多个，按 `nodeId` 或 `streamId` 分片，避免状态锁 |
+| 连接迁移 | 握手与帧头引入 `connectionId`，支持地址变化与中继切换 |
+| 互联网打洞 | 发现扩展为 rendezvous，握手交换候选地址与密钥 |
 | TCP 业务连接 | 复用 `TCPSocket`，在 I/O 线程 accept 后投递业务线程建立对象 |
-| 加密认证 | 在 `Open` 中增加 token 字段，握手阶段校验 |
+| 加密认证 | 握手阶段交换 token 或做密钥协商，逐帧认证 |

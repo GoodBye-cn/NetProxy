@@ -9,10 +9,10 @@
 #include "net/Socket.h"
 #include "net/UDPSocket.h"
 
-namespace netproxy::session {
+namespace netproxy::transport {
 
 /**
- * 数据通道：持有会话与业务数据使用的 UDP socket。
+ * 数据 UDP socket 的封装。
  *
  * 负责绑定、读事件注册与发送投递，不解析报文内容。
  * socket 的读写都在 I/O 线程完成。
@@ -90,4 +90,4 @@ private:
     bool registered_ = false;
 };
 
-} // namespace netproxy::session
+}

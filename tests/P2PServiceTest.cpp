@@ -65,17 +65,17 @@ void serviceDataTransfer() {
     }
     test::checkTrue(discovered, "数据: A 发现 B");
 
-    const std::uint32_t sessionId = serviceA.openSession(configB.nodeId);
-    test::checkTrue(sessionId != 0, "数据: 发起会话");
+    const std::uint32_t streamId = serviceA.openStream(configB.nodeId);
+    test::checkTrue(streamId != 0, "数据: 开流成功");
 
-    bool established = false;
-    for (int attempt = 0; attempt < 40 && !established; ++attempt) {
+    bool opened = false;
+    for (int attempt = 0; attempt < 40 && !opened; ++attempt) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        established = serviceA.isSessionEstablished(sessionId);
+        opened = serviceA.isStreamOpen(streamId);
     }
-    test::checkTrue(established, "数据: 会话建立");
+    test::checkTrue(opened, "数据: 流已打开");
 
-    test::checkTrue(serviceA.sendData(sessionId, "hello", 5), "数据: 提交成功");
+    test::checkTrue(serviceA.sendData(streamId, "hello", 5), "数据: 提交成功");
 
     bool delivered = false;
     for (int attempt = 0; attempt < 40 && !delivered; ++attempt) {
@@ -89,13 +89,13 @@ void serviceDataTransfer() {
         test::checkEquals(payload, std::string("hello"), "数据: 内容一致");
     }
 
-    test::checkFalse(serviceA.sendData(sessionId, nullptr, 0), "数据: 空数据被拒绝");
+    test::checkFalse(serviceA.sendData(streamId, nullptr, 0), "数据: 空数据被拒绝");
 
     serviceA.stop();
     serviceB.stop();
 }
 
-void serviceSession() {
+void serviceStream() {
     netproxy::P2PServiceConfig configA;
     configA.nodeId = 0x10101010;
     configA.dataPort = 9501;
@@ -109,14 +109,14 @@ void serviceSession() {
     netproxy::P2PService serviceB;
 
     std::atomic<int> openedB{0};
-    serviceB.setSessionHandler([&openedB](std::uint32_t, std::uint32_t, netproxy::SessionEvent event) {
-        if (event == netproxy::SessionEvent::Opened) {
+    serviceB.setStreamHandler([&openedB](std::uint32_t, std::uint32_t, netproxy::StreamEvent event, std::uint8_t) {
+        if (event == netproxy::StreamEvent::Opened) {
             openedB.fetch_add(1);
         }
     });
 
-    test::checkTrue(serviceA.start(configA), "服务会话: A 启动");
-    test::checkTrue(serviceB.start(configB), "服务会话: B 启动");
+    test::checkTrue(serviceA.start(configA), "服务流: A 启动");
+    test::checkTrue(serviceB.start(configB), "服务流: B 启动");
 
     netproxy::PeerInfo peer;
     bool discovered = false;
@@ -124,34 +124,34 @@ void serviceSession() {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         discovered = serviceA.findPeer(configB.nodeId, peer);
     }
-    test::checkTrue(discovered, "服务会话: A 发现 B");
+    test::checkTrue(discovered, "服务流: A 发现 B");
 
-    const std::uint32_t sessionId = serviceA.openSession(configB.nodeId);
-    test::checkTrue(sessionId != 0, "服务会话: 发起成功");
+    const std::uint32_t streamId = serviceA.openStream(configB.nodeId);
+    test::checkTrue(streamId != 0, "服务流: 发起成功");
 
     bool established = false;
     for (int attempt = 0; attempt < 40 && !established; ++attempt) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        established = serviceA.isSessionEstablished(sessionId) && openedB.load() > 0;
+        established = serviceA.isStreamOpen(streamId) && openedB.load() > 0;
     }
-    test::checkTrue(established, "服务会话: 双方建立完成");
+    test::checkTrue(established, "服务流: 双方打开完成");
 
-    const std::vector<netproxy::SessionInfo> active = serviceA.sessions();
-    test::checkEquals(static_cast<int>(active.size()), 1, "服务会话: 列表包含一条会话");
+    const std::vector<netproxy::StreamInfo> active = serviceA.streams();
+    test::checkEquals(static_cast<int>(active.size()), 1, "服务流: 列表包含一条流");
     if (!active.empty()) {
-        test::checkTrue(active[0].established, "服务会话: 列表状态为已建立");
+        test::checkTrue(active[0].open, "服务流: 列表状态为已打开");
         test::checkEquals(static_cast<int>(active[0].peerNodeId), static_cast<int>(configB.nodeId),
-                          "服务会话: 列表对端标识正确");
+                          "服务流: 列表对端标识正确");
     }
 
-    test::checkTrue(serviceA.closeSession(sessionId), "服务会话: 关闭请求已投递");
+    test::checkTrue(serviceA.closeStream(streamId), "服务流: 关闭请求已投递");
 
     bool cleared = false;
     for (int attempt = 0; attempt < 20 && !cleared; ++attempt) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        cleared = serviceA.sessions().empty();
+        cleared = serviceA.streams().empty();
     }
-    test::checkTrue(cleared, "服务会话: 关闭后列表为空");
+    test::checkTrue(cleared, "服务流: 关闭后列表为空");
 
     serviceA.stop();
     serviceB.stop();
@@ -161,6 +161,6 @@ void serviceSession() {
 
 void runP2PServiceTests() {
     NETPROXY_CASE(serviceLifecycle);
-    NETPROXY_CASE(serviceSession);
+    NETPROXY_CASE(serviceStream);
     NETPROXY_CASE(serviceDataTransfer);
 }

@@ -3,13 +3,14 @@
 #include "Log.h"
 #include "core/IoLoop.h"
 #include "core/TaskLoop.h"
+#include "net/Socket.h"
 #include "node/NodeDiscovery.h"
 #include "node/NodeManager.h"
-#include "session/DataChannel.h"
-#include "session/SessionManager.h"
+#include "protocol/Protocol.h"
+#include "transport/DataChannel.h"
+#include "transport/PeerConnectionManager.h"
 
 #include <atomic>
-#include <chrono>
 #include <mutex>
 #include <random>
 #include <utility>
@@ -20,23 +21,22 @@ namespace {
 
 // 生成非 0 的随机节点标识。
 std::uint32_t randomNodeId() {
-    std::random_device device;
-    std::mt19937 engine(device());
+    thread_local std::mt19937 engine(std::random_device{}());
     std::uniform_int_distribution<std::uint32_t> distribution(1, 0xFFFFFFFFU);
     return distribution(engine);
 }
 
-// 内部事件转换为对外事件。
-SessionEvent toPublicEvent(session::SessionManager::Event event) {
+// 内部流事件转换为对外事件。
+StreamEvent toPublicEvent(protocol::StreamEvent event) {
     switch (event) {
-    case session::SessionManager::Event::Opened:
-        return SessionEvent::Opened;
-    case session::SessionManager::Event::Rejected:
-        return SessionEvent::Rejected;
-    case session::SessionManager::Event::Closed:
-        return SessionEvent::Closed;
+    case protocol::StreamEvent::Opened:
+        return StreamEvent::Opened;
+    case protocol::StreamEvent::Rejected:
+        return StreamEvent::Rejected;
+    case protocol::StreamEvent::Closed:
+        return StreamEvent::Closed;
     }
-    return SessionEvent::Closed;
+    return StreamEvent::Closed;
 }
 
 } // namespace
@@ -46,63 +46,32 @@ struct P2PService::Impl {
     core::TaskLoop business;
 
     mutable std::mutex nodeMutex;
-    std::unique_ptr<session::DataChannel> channel;
+    std::unique_ptr<transport::DataChannel> channel;
     std::unique_ptr<node::NodeDiscovery> discovery;
     std::unique_ptr<node::NodeManager> node;
-    std::unique_ptr<session::SessionManager> sessions;
+    std::unique_ptr<transport::PeerConnectionManager> connections;
 
     std::mutex handlerMutex;
     PeerHandler handler;
-    SessionHandler sessionHandler;
+    StreamHandler streamHandler;
     DataHandler dataHandler;
 
     std::uint32_t nodeId = 0;
     std::uint16_t dataPort = 0;
     std::atomic<bool> running{false};
 
-    // 把当前回调安装到节点管理器，调用方需持有 nodeMutex。
+    // 把当前发现回调安装到节点管理器，调用方需持有 nodeMutex。
     void installPeerHandler() {
         if (!node) {
             return;
         }
 
-        std::lock_guard<std::mutex> lock(handlerMutex);
-        node->setPeerHandler(handler);
-    }
-
-    // 把当前会话回调安装到会话模块，调用方需持有 nodeMutex。
-    void installSessionHandler() {
-        if (!sessions) {
-            return;
-        }
-
-        SessionHandler target;
+        PeerHandler target;
         {
             std::lock_guard<std::mutex> lock(handlerMutex);
-            target = sessionHandler;
+            target = handler;
         }
-
-        sessions->setHandler(
-            [target](std::uint32_t sessionId, std::uint32_t peerNodeId, session::SessionManager::Event event) {
-                if (target) {
-                    target(sessionId, peerNodeId, toPublicEvent(event));
-                }
-            });
-    }
-
-    // 把当前数据回调安装到会话模块，调用方需持有 nodeMutex。
-    void installDataHandler() {
-        if (!sessions) {
-            return;
-        }
-
-        DataHandler target;
-        {
-            std::lock_guard<std::mutex> lock(handlerMutex);
-            target = dataHandler;
-        }
-
-        sessions->setDataHandler(target);
+        node->setPeerHandler(target);
     }
 };
 
@@ -123,21 +92,23 @@ bool P2PService::start(const P2PServiceConfig& config) {
     nodeConfig.announceIntervalMs = config.announceIntervalMs;
     nodeConfig.peerTimeoutMs = config.peerTimeoutMs;
 
-    session::SessionConfig sessionConfig;
-    sessionConfig.maxSessions = config.maxSessions;
-    sessionConfig.maxSessionsPerPeer = config.maxSessionsPerPeer;
-    sessionConfig.openRetryIntervalMs = config.sessionRetryIntervalMs;
-    sessionConfig.openRetryCount = config.sessionRetryCount;
-    sessionConfig.transport.maxPayloadSize = config.maxPayloadSize;
-    sessionConfig.transport.sendWindow = config.sendWindow;
-    sessionConfig.transport.receiveWindow = config.receiveWindow;
-    sessionConfig.transport.retransmitTimeoutMs = config.retransmitTimeoutMs;
-    sessionConfig.transport.maxRetransmitCount = config.maxRetransmitCount;
+    transport::PeerConfig peerConfig;
+    peerConfig.helloRetryIntervalMs = config.helloRetryIntervalMs;
+    peerConfig.helloRetryCount = config.helloRetryCount;
+    peerConfig.maxStreams = config.maxStreamsPerPeer;
+    peerConfig.maxPayloadSize = config.maxPayloadSize;
+    peerConfig.sendWindow = config.sendWindow;
+    peerConfig.receiveWindow = config.receiveWindow;
+    peerConfig.retransmitTimeoutMs = config.retransmitTimeoutMs;
+    peerConfig.maxRetransmitCount = config.maxRetransmitCount;
+    peerConfig.pingIntervalMs = config.pingIntervalMs;
+    peerConfig.pingTimeoutMs = config.pingTimeoutMs;
+    peerConfig.pingRetryCount = config.pingRetryCount;
 
     std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
 
     // 1. 数据通道先就绪，得到真实端口
-    impl_->channel = std::make_unique<session::DataChannel>(impl_->io);
+    impl_->channel = std::make_unique<transport::DataChannel>(impl_->io);
     if (!impl_->channel->open(config.dataBindAddress, config.dataPort)) {
         impl_->channel.reset();
         return false;
@@ -164,18 +135,39 @@ bool P2PService::start(const P2PServiceConfig& config) {
         return false;
     }
 
-    // 4. 会话依赖数据通道与节点查询
-    auto resolver = [node = impl_->node.get()](std::uint32_t peerNodeId, netproxy::PeerInfo& peer) {
-        return node->findPeer(peerNodeId, peer);
-    };
+    // 4. 连接与流
+    impl_->connections =
+        std::make_unique<transport::PeerConnectionManager>(*impl_->channel, nodeId, peerConfig, impl_->business);
 
-    impl_->sessions =
-        std::make_unique<session::SessionManager>(*impl_->channel, resolver, nodeId, sessionConfig, impl_->business);
-    impl_->installSessionHandler();
-    impl_->installDataHandler();
+    Impl* impl = impl_.get();
+    impl_->connections->setStreamHandler(
+        [impl](std::uint32_t streamId, std::uint32_t peerNodeId, protocol::StreamEvent event, protocol::Reason reason) {
+            StreamHandler target;
+            {
+                std::lock_guard<std::mutex> lock(impl->handlerMutex);
+                target = impl->streamHandler;
+            }
 
-    if (!impl_->sessions->start()) {
-        impl_->sessions.reset();
+            if (target) {
+                target(streamId, peerNodeId, toPublicEvent(event), static_cast<std::uint8_t>(reason));
+            }
+        });
+
+    impl_->connections->setDataHandler(
+        [impl](std::uint32_t streamId, std::uint32_t peerNodeId, const char* data, std::size_t size) {
+            DataHandler target;
+            {
+                std::lock_guard<std::mutex> lock(impl->handlerMutex);
+                target = impl->dataHandler;
+            }
+
+            if (target) {
+                target(streamId, peerNodeId, data, size);
+            }
+        });
+
+    if (!impl_->connections->start()) {
+        impl_->connections.reset();
         impl_->node->stop();
         impl_->node.reset();
         impl_->discovery.reset();
@@ -184,8 +176,8 @@ bool P2PService::start(const P2PServiceConfig& config) {
     }
 
     if (!impl_->io.start()) {
-        impl_->sessions->stop();
-        impl_->sessions.reset();
+        impl_->connections->stop();
+        impl_->connections.reset();
         impl_->node->stop();
         impl_->node.reset();
         impl_->discovery.reset();
@@ -195,8 +187,8 @@ bool P2PService::start(const P2PServiceConfig& config) {
 
     if (!impl_->business.start()) {
         impl_->io.stop();
-        impl_->sessions->stop();
-        impl_->sessions.reset();
+        impl_->connections->stop();
+        impl_->connections.reset();
         impl_->node->stop();
         impl_->node.reset();
         impl_->discovery.reset();
@@ -222,9 +214,9 @@ void P2PService::stop() {
 
     std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
 
-    if (impl_->sessions) {
-        impl_->sessions->stop();
-        impl_->sessions.reset();
+    if (impl_->connections) {
+        impl_->connections->stop();
+        impl_->connections.reset();
     }
 
     if (impl_->node) {
@@ -282,89 +274,125 @@ void P2PService::setPeerHandler(PeerHandler handler) {
     impl_->installPeerHandler();
 }
 
-std::uint32_t P2PService::openSession(std::uint32_t peerNodeId) {
-    session::SessionManager* sessions = nullptr;
+bool P2PService::connect(std::uint32_t peerNodeId) {
+    net::IPAddress address;
+    transport::PeerConnectionManager* connections = nullptr;
+
     {
         std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
-        sessions = impl_->sessions.get();
+        if (!impl_->connections || !impl_->node) {
+            return false;
+        }
+
+        PeerInfo peer;
+        if (!impl_->node->findPeer(peerNodeId, peer)) {
+            return false;
+        }
+
+        address = net::IPAddress::parse(peer.address, peer.port);
+        if (!address.isValid()) {
+            return false;
+        }
+
+        connections = impl_->connections.get();
     }
 
-    if (sessions == nullptr) {
-        return 0;
-    }
-
-    return sessions->open(peerNodeId);
+    return connections->connect(peerNodeId, address);
 }
 
-bool P2PService::closeSession(std::uint32_t sessionId) {
-    session::SessionManager* sessions = nullptr;
+bool P2PService::isConnected(std::uint32_t peerNodeId) const {
+    std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
+    if (!impl_->connections) {
+        return false;
+    }
+    return impl_->connections->isConnected(peerNodeId);
+}
+
+std::uint32_t P2PService::openStream(std::uint32_t peerNodeId) {
+    net::IPAddress address;
+    transport::PeerConnectionManager* connections = nullptr;
+
     {
         std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
-        sessions = impl_->sessions.get();
+        if (!impl_->connections || !impl_->node) {
+            return 0;
+        }
+
+        PeerInfo peer;
+        if (!impl_->node->findPeer(peerNodeId, peer)) {
+            return 0;
+        }
+
+        address = net::IPAddress::parse(peer.address, peer.port);
+        if (!address.isValid()) {
+            return 0;
+        }
+
+        connections = impl_->connections.get();
     }
 
-    if (sessions == nullptr) {
-        return false;
-    }
-
-    return sessions->close(sessionId);
+    return connections->openStream(peerNodeId, address);
 }
 
-bool P2PService::isSessionEstablished(std::uint32_t sessionId) const {
-    std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
-    if (!impl_->sessions) {
+bool P2PService::closeStream(std::uint32_t streamId) {
+    transport::PeerConnectionManager* connections = nullptr;
+    {
+        std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
+        connections = impl_->connections.get();
+    }
+
+    if (connections == nullptr) {
         return false;
     }
-    return impl_->sessions->isEstablished(sessionId);
+    return connections->closeStream(streamId);
 }
 
-std::vector<SessionInfo> P2PService::sessions() const {
-    std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
-    if (!impl_->sessions) {
-        return std::vector<SessionInfo>();
+bool P2PService::sendData(std::uint32_t streamId, const void* data, std::size_t size) {
+    transport::PeerConnectionManager* connections = nullptr;
+    {
+        std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
+        connections = impl_->connections.get();
     }
 
-    std::vector<SessionInfo> result;
-    for (const session::SessionRecord& record : impl_->sessions->list()) {
-        SessionInfo info;
-        info.sessionId = record.sessionId;
+    if (connections == nullptr) {
+        return false;
+    }
+    return connections->sendData(streamId, data, size);
+}
+
+bool P2PService::isStreamOpen(std::uint32_t streamId) const {
+    std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
+    if (!impl_->connections) {
+        return false;
+    }
+    return impl_->connections->isStreamOpen(streamId);
+}
+
+std::vector<StreamInfo> P2PService::streams() const {
+    std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
+    if (!impl_->connections) {
+        return std::vector<StreamInfo>();
+    }
+
+    std::vector<StreamInfo> result;
+    for (const transport::StreamRecord& record : impl_->connections->streams()) {
+        StreamInfo info;
+        info.streamId = record.streamId;
         info.peerNodeId = record.peerNodeId;
-        info.established = record.state == session::SessionState::Established;
+        info.open = record.open;
         result.push_back(info);
     }
     return result;
 }
 
-void P2PService::setSessionHandler(SessionHandler handler) {
-    std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
-    {
-        std::lock_guard<std::mutex> handlerLock(impl_->handlerMutex);
-        impl_->sessionHandler = std::move(handler);
-    }
-    impl_->installSessionHandler();
+void P2PService::setStreamHandler(StreamHandler handler) {
+    std::lock_guard<std::mutex> handlerLock(impl_->handlerMutex);
+    impl_->streamHandler = std::move(handler);
 }
 
 void P2PService::setDataHandler(DataHandler handler) {
-    std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
-    {
-        std::lock_guard<std::mutex> handlerLock(impl_->handlerMutex);
-        impl_->dataHandler = std::move(handler);
-    }
-    impl_->installDataHandler();
-}
-
-bool P2PService::sendData(std::uint32_t sessionId, const void* data, std::size_t size) {
-    session::SessionManager* sessions = nullptr;
-    {
-        std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
-        sessions = impl_->sessions.get();
-    }
-
-    if (sessions == nullptr) {
-        return false;
-    }
-
-    return sessions->send(sessionId, data, size);
+    std::lock_guard<std::mutex> handlerLock(impl_->handlerMutex);
+    impl_->dataHandler = std::move(handler);
 }
 
 } // namespace netproxy

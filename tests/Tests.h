@@ -16,8 +16,10 @@ void runNodeTests();
 
 void runCoreTests();
 
-void runSessionTests();
 
 void runP2PServiceTests();
 
-void runTransportTests();
+
+void runPeerProtocolTests();
+
+void runPeerConnectionTests();

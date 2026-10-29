@@ -17,9 +17,9 @@ int main(int argc, char* argv[]) {
     runDiscoveryTests();
     runNodeTests();
     runCoreTests();
-    runSessionTests();
     runP2PServiceTests();
-    runTransportTests();
+    runPeerProtocolTests();
+    runPeerConnectionTests();
 
     return test::finish("NetProxy");
 }

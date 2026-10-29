@@ -11,18 +11,18 @@
 
 namespace netproxy {
 
-// 会话事件。
-enum class SessionEvent {
-    Opened,   // 握手完成
-    Rejected, // 被对端拒绝或握手超时
-    Closed    // 会话已关闭
+// 流事件。
+enum class StreamEvent {
+    Opened,   // 流已打开
+    Rejected, // 建连失败、流上限或对端拒绝
+    Closed    // 流已关闭
 };
 
-// 会话快照。
-struct SessionInfo {
-    std::uint32_t sessionId = 0;
+// 流快照。
+struct StreamInfo {
+    std::uint32_t streamId = 0;
     std::uint32_t peerNodeId = 0;
-    bool established = false; // 握手是否已完成
+    bool open = false; // 是否已打开
 };
 
 // P2P 服务配置。
@@ -36,17 +36,23 @@ struct P2PServiceConfig {
     int announceIntervalMs = 3000;                // 公告周期
     int peerTimeoutMs = 10000;                    // 节点过期时间
 
-    std::size_t maxSessions = 64;       // 会话总数上限
-    std::size_t maxSessionsPerPeer = 8; // 单对节点会话上限
-    int sessionRetryIntervalMs = 1000;  // Open 重发间隔
-    int sessionRetryCount = 5;          // Open 最多重发次数
+    // 连接与流
+    std::size_t maxStreams = 64;       // 流总数上限
+    std::size_t maxStreamsPerPeer = 8; // 单连接流上限
+    int helloRetryIntervalMs = 1000;   // Hello 重发间隔
+    int helloRetryCount = 5;           // Hello 最多重发次数
 
-    // 数据传输参数
-    std::size_t maxPayloadSize = 1400; // 单包负载上限
-    std::size_t sendWindow = 16;       // 发送窗口（报文数）
-    std::size_t receiveWindow = 64;    // 接收缓存上限（报文数）
+    // 可靠传输
+    std::size_t maxPayloadSize = 1400; // 单帧负载上限
+    std::size_t sendWindow = 16;       // 发送窗口（帧数）
+    std::size_t receiveWindow = 64;    // 接收缓存（帧数）
     int retransmitTimeoutMs = 200;     // 重传超时
-    int maxRetransmitCount = 5;        // 单包重传上限
+    int maxRetransmitCount = 5;        // 单帧重传上限
+
+    // 心跳
+    int pingIntervalMs = 30000; // 空闲多久发 Ping
+    int pingTimeoutMs = 10000;  // 每次 Ping 等待时间
+    int pingRetryCount = 3;     // 连续失败上限
 };
 
 /**
@@ -54,8 +60,9 @@ struct P2PServiceConfig {
  *
  * 内部包含一个 I/O 线程与一个业务线程：
  * - I/O 线程负责数据 socket 与组播 socket 的读写；
- * - 业务线程负责节点表、会话状态机、周期公告与过期淘汰。
+ * - 业务线程负责节点表、连接状态机、流表、周期公告与过期淘汰。
  *
+ * 不设独立的会话层：对端之间一条可靠连接，业务在连接上开流。
  * 通过 pimpl 隐藏内部实现，外部只需包含本头文件。
  */
 class P2PService final {
@@ -69,26 +76,28 @@ public:
     using PeerHandler = std::function<void(const PeerInfo& peer)>;
 
     /**
-     * 会话事件回调。
+     * 流事件回调。
      *
-     * @param sessionId 会话标识。
+     * @param streamId 流标识。
      * @param peerNodeId 对端节点标识。
      * @param event 事件类型。
+     * @param reason 关闭或拒绝原因，Opened 时为 0。
      * @note 回调运行在业务线程，不能执行阻塞操作，也不要调用 stop()。
      */
-    using SessionHandler = std::function<void(std::uint32_t sessionId, std::uint32_t peerNodeId, SessionEvent event)>;
+    using StreamHandler =
+        std::function<void(std::uint32_t streamId, std::uint32_t peerNodeId, StreamEvent event, std::uint8_t reason)>;
 
     /**
      * 数据交付回调。
      *
-     * @param sessionId 会话标识。
+     * @param streamId 流标识。
      * @param peerNodeId 对端节点标识。
      * @param data 数据内容，回调返回后失效，需要保留请自行拷贝。
      * @param size 数据长度。
      * @note 回调运行在业务线程，不能执行阻塞操作，也不要调用 stop()。
      */
     using DataHandler =
-        std::function<void(std::uint32_t sessionId, std::uint32_t peerNodeId, const char* data, std::size_t size)>;
+        std::function<void(std::uint32_t streamId, std::uint32_t peerNodeId, const char* data, std::size_t size)>;
 
     // 构造服务，不启动线程。
     P2PService();
@@ -102,7 +111,7 @@ public:
     /**
      * 启动服务。
      *
-     * 顺序：绑定数据 socket -> 打开组播服务 -> 注册会话 socket ->
+     * 顺序：绑定数据 socket -> 打开组播服务 -> 启动节点管理 -> 启动连接管理 ->
      * 启动 I/O 线程 -> 启动业务线程。
      *
      * @param config 服务配置，未配置项使用默认值。
@@ -164,48 +173,75 @@ public:
     void setPeerHandler(PeerHandler handler);
 
     /**
-     * 向指定节点发起会话。
+     * 与指定节点建立连接。
      *
-     * 立即返回分配的会话标识，握手在业务线程异步进行，结果通过 SessionHandler 通知。
+     * @param peerNodeId 对端节点标识，必须已在节点表中。
+     * @return 请求已受理返回 true。
+     * @note 连接异步建立，结果通过 isConnected 或后续流事件观察。
+     */
+    bool connect(std::uint32_t peerNodeId);
+
+    /**
+     * 判断连接是否已建立。
      *
      * @param peerNodeId 对端节点标识。
-     * @return 新会话标识；服务未启动、参数非法或无法分配标识时返回 0。
-     * @note 返回非 0 不代表对端可达：对端未知、超出上限或对端拒绝都会以 Rejected 回调。
-     *       回调可能在返回前触发，调用方应提前准备好状态收集。
+     * @return 已连接返回 true。
      */
-    std::uint32_t openSession(std::uint32_t peerNodeId);
+    bool isConnected(std::uint32_t peerNodeId) const;
 
     /**
-     * 关闭会话。
+     * 在指定节点上开一条流。
      *
-     * @param sessionId 会话标识。
-     * @return 关闭请求已投递返回 true；服务未启动或参数非法返回 false。
-     * @note 只表示请求已受理，会话不存在时不会产生事件。
-     */
-    bool closeSession(std::uint32_t sessionId);
-
-    /**
-     * 判断会话是否已建立。
+     * 立即返回分配的流标识，未连接时自动建连并在就绪后补发开流帧，
+     * 结果通过 StreamHandler 通知。
      *
-     * @param sessionId 会话标识。
-     * @return 状态为已建立返回 true。
+     * @param peerNodeId 对端节点标识，必须已在节点表中。
+     * @return 流标识；服务未启动、对端未知或无法分配时返回 0。
+     * @note 返回非 0 不代表流已打开，超限或拒绝都会以 Rejected 回调。
      */
-    bool isSessionEstablished(std::uint32_t sessionId) const;
+    std::uint32_t openStream(std::uint32_t peerNodeId);
 
     /**
-     * 获取当前会话快照，线程安全。
+     * 关闭流。
      *
-     * @return 所有会话，包含握手中的记录；服务未启动返回空列表。
+     * @param streamId 流标识。
+     * @return 请求已投递返回 true；服务未启动或参数非法返回 false。
      */
-    std::vector<SessionInfo> sessions() const;
+    bool closeStream(std::uint32_t streamId);
 
     /**
-     * 设置会话事件回调。
+     * 向流提交数据。
+     *
+     * @param streamId 流标识。
+     * @param data 数据内容。
+     * @param size 长度，不能超过 maxPayloadSize。
+     * @return 请求已投递返回 true。
+     * @note 返回 true 表示已受理，不表示对端已收到。
+     */
+    bool sendData(std::uint32_t streamId, const void* data, std::size_t size);
+
+    /**
+     * 判断流是否已打开。
+     *
+     * @param streamId 流标识。
+     * @return 已打开返回 true。
+     */
+    bool isStreamOpen(std::uint32_t streamId) const;
+
+    /**
+     * 获取流快照，线程安全。
+     *
+     * @return 当前所有流；服务未启动返回空列表。
+     */
+    std::vector<StreamInfo> streams() const;
+
+    /**
+     * 设置流事件回调。
      *
      * @param handler 回调对象，为空表示取消。
      * @note 可在启动前或运行中设置。
      */
-    void setSessionHandler(SessionHandler handler);
+    void setStreamHandler(StreamHandler handler);
 
     /**
      * 设置数据交付回调。
@@ -214,18 +250,6 @@ public:
      * @note 可在启动前或运行中设置。
      */
     void setDataHandler(DataHandler handler);
-
-    /**
-     * 向已建立的会话提交一条数据。
-     *
-     * 可靠传输由会话层负责，按序交付到对端。
-     *
-     * @param sessionId 会话标识。
-     * @param data 数据内容。
-     * @param size 长度，不能超过 maxPayloadSize。
-     * @return 会话已建立且请求已受理返回 true。
-     */
-    bool sendData(std::uint32_t sessionId, const void* data, std::size_t size);
 
 private:
     struct Impl;

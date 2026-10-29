@@ -1,10 +1,10 @@
-#include "DataChannel.h"
+#include "transport/DataChannel.h"
 
 #include "Log.h"
 
 #include <utility>
 
-namespace netproxy::session {
+namespace netproxy::transport {
 
 DataChannel::DataChannel(core::IoLoop& io) : io_(io) {}
 
@@ -104,4 +104,4 @@ void DataChannel::handleReadable() {
     }
 }
 
-} // namespace netproxy::session
+} // namespace netproxy::transport
