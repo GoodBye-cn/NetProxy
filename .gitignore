@@ -1,0 +1,19 @@
+# 构建输出
+build/
+out/
+cmake-build-*/
+compile_commands.json
+
+# IDE
+.vs/
+.vscode/
+.idea/
+.cache/
+
+# 中间产物
+*.o
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.user

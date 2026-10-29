@@ -1,0 +1,96 @@
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <thread>
+
+#include "P2PService.h"
+#include "TestSupport.h"
+
+namespace {
+
+void serviceLifecycle() {
+    netproxy::P2PService service;
+
+    test::checkFalse(service.isRunning(), "服务: 初始未运行");
+
+    netproxy::P2PServiceConfig config;
+    config.nodeId = 0;
+    config.dataPort = 0;
+
+    test::checkTrue(service.start(config), "服务: 启动成功");
+    test::checkTrue(service.isRunning(), "服务: 运行状态正确");
+    test::checkTrue(service.nodeId() != 0, "服务: 随机分配 nodeId");
+    test::checkTrue(service.dataPort() != 0, "服务: 系统分配数据端口");
+
+    service.stop();
+    test::checkFalse(service.isRunning(), "服务: 停止后状态正确");
+}
+
+void serviceSession() {
+    netproxy::P2PServiceConfig configA;
+    configA.nodeId = 0x10101010;
+    configA.dataPort = 9501;
+    configA.announceIntervalMs = 100;
+
+    netproxy::P2PServiceConfig configB = configA;
+    configB.nodeId = 0x20202020;
+    configB.dataPort = 9502;
+
+    netproxy::P2PService serviceA;
+    netproxy::P2PService serviceB;
+
+    std::atomic<int> openedB{0};
+    serviceB.setSessionHandler([&openedB](std::uint32_t, std::uint32_t, netproxy::SessionEvent event) {
+        if (event == netproxy::SessionEvent::Opened) {
+            openedB.fetch_add(1);
+        }
+    });
+
+    test::checkTrue(serviceA.start(configA), "服务会话: A 启动");
+    test::checkTrue(serviceB.start(configB), "服务会话: B 启动");
+
+    netproxy::PeerInfo peer;
+    bool discovered = false;
+    for (int attempt = 0; attempt < 40 && !discovered; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        discovered = serviceA.findPeer(configB.nodeId, peer);
+    }
+    test::checkTrue(discovered, "服务会话: A 发现 B");
+
+    const std::uint32_t sessionId = serviceA.openSession(configB.nodeId);
+    test::checkTrue(sessionId != 0, "服务会话: 发起成功");
+
+    bool established = false;
+    for (int attempt = 0; attempt < 40 && !established; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        established = serviceA.isSessionEstablished(sessionId) && openedB.load() > 0;
+    }
+    test::checkTrue(established, "服务会话: 双方建立完成");
+
+    const std::vector<netproxy::SessionInfo> active = serviceA.sessions();
+    test::checkEquals(static_cast<int>(active.size()), 1, "服务会话: 列表包含一条会话");
+    if (!active.empty()) {
+        test::checkTrue(active[0].established, "服务会话: 列表状态为已建立");
+        test::checkEquals(static_cast<int>(active[0].peerNodeId), static_cast<int>(configB.nodeId),
+                          "服务会话: 列表对端标识正确");
+    }
+
+    test::checkTrue(serviceA.closeSession(sessionId), "服务会话: 关闭请求已投递");
+
+    bool cleared = false;
+    for (int attempt = 0; attempt < 20 && !cleared; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        cleared = serviceA.sessions().empty();
+    }
+    test::checkTrue(cleared, "服务会话: 关闭后列表为空");
+
+    serviceA.stop();
+    serviceB.stop();
+}
+
+} // namespace
+
+void runP2PServiceTests() {
+    NETPROXY_CASE(serviceLifecycle);
+    NETPROXY_CASE(serviceSession);
+}

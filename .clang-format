@@ -1,0 +1,40 @@
+---
+Language: Cpp
+Standard: c++17
+BasedOnStyle: LLVM
+
+# 缩进：Java 风格 4 空格，不使用制表符
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ContinuationIndentWidth: 4
+AccessModifierOffset: -4
+NamespaceIndentation: None
+
+# 大括号：左括号不换行
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+
+# 行宽与换行
+ColumnLimit: 120
+BreakBeforeBinaryOperators: None
+BreakBeforeTernaryOperators: true
+AlignAfterOpenBracket: Align
+BinPackArguments: true
+BinPackParameters: true
+
+# 指针与引用
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+
+# 其他
+SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true
+Cpp11BracedListStyle: true
+FixNamespaceComments: true
+SortIncludes: CaseSensitive
+IncludeBlocks: Preserve

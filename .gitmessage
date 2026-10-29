@@ -1,0 +1,18 @@
+# <area>: <summary>
+#
+# 首行：<area>: 加祈使句概括改动，50 字内，结尾不加句号。
+#
+# 正文：说明为什么改、改了什么；每行不超过 72 列，段落之间空行分隔。
+#       涉及 Linux/POSIX 与 Windows 的差异时需注明；无正文可省略。
+#
+# 尾部：Closes #<issue>
+#       BREAKING CHANGE: <不兼容变更的迁移方式>
+#
+# area: net | core | node | session | apps | tests | cmake | docs
+#
+# 示例：
+# node: 公告报文携带业务端口
+#
+# 发现之后仍需额外配置端口才能建连，改为在 12 字节报文中携带。
+#
+# Closes #7
