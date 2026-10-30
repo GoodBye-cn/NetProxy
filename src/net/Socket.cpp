@@ -171,8 +171,9 @@ Socket::~Socket() {
 }
 
 Socket::Socket(Socket&& other) noexcept
-    : socketType_(other.socketType_), protocol_(other.protocol_), handle_(other.handle_) {
+    : socketType_(other.socketType_), protocol_(other.protocol_), handle_(other.handle_), family_(other.family_) {
     other.handle_ = INVALID_SOCKET_HANDLE;
+    other.family_ = AF_UNSPEC;
 }
 
 Socket& Socket::operator=(Socket&& other) noexcept {
@@ -181,7 +182,9 @@ Socket& Socket::operator=(Socket&& other) noexcept {
         socketType_ = other.socketType_;
         protocol_ = other.protocol_;
         handle_ = other.handle_;
+        family_ = other.family_;
         other.handle_ = INVALID_SOCKET_HANDLE;
+        other.family_ = AF_UNSPEC;
     }
     return *this;
 }
@@ -206,6 +209,7 @@ void Socket::close() {
 #endif
 
     handle_ = INVALID_SOCKET_HANDLE;
+    family_ = AF_UNSPEC;
 }
 
 int Socket::lastErrorCode() const {
@@ -260,6 +264,13 @@ int Socket::addressFamily() const {
         return AF_UNSPEC;
     }
 
+    // 创建时已记录地址族，直接使用。Windows 上对未绑定的套接字调用 getsockname 会返回
+    // WSAEINVAL，用它反查会把 AF_INET 误判成 AF_UNSPEC，导致 bind 前检查失败。
+    if (family_ != AF_UNSPEC) {
+        return family_;
+    }
+
+    // 接管的外部句柄没有创建时的地址族，退回系统查询。
     sockaddr_storage address{};
     SocketLength length = sizeof(address);
     if (getsockname(handle_, reinterpret_cast<sockaddr*>(&address), &length) != 0) {
@@ -344,7 +355,6 @@ bool Socket::bind(const IPAddress& address) {
     if (::bind(nativeHandle(), address.data(), address.length()) != 0) {
         const std::string error = lastErrorMessage();
         Log::error("绑定失败 ", address.toString(), ": ", error);
-        close();
         return false;
     }
 
@@ -353,12 +363,16 @@ bool Socket::bind(const IPAddress& address) {
 }
 
 bool Socket::create(int family) {
+    // 已持有句柄时不再重建：静默关闭可能销毁外部仍在使用的句柄。
+    if (isValid()) {
+        Log::debug("创建套接字跳过: 已持有句柄");
+        return false;
+    }
+
     if (!ensureLibrary()) {
         Log::error("创建套接字失败: 套接字库初始化失败");
         return false;
     }
-
-    close();
 
     const SocketHandle handle = ::socket(family, socketType_, protocol_);
     if (handle == INVALID_SOCKET_HANDLE) {
@@ -367,6 +381,7 @@ bool Socket::create(int family) {
     }
 
     handle_ = handle;
+    family_ = family;
     return true;
 }
 

@@ -226,11 +226,11 @@ public:
     /**
      * 创建套接字，但不执行绑定。
      *
-     * 使用构造时记录的套接字类型与协议创建句柄，若已持有句柄会先关闭。
-     * 适用于需要先设置地址复用等选项再绑定的场景。
+     * 使用构造时记录的套接字类型与协议创建句柄。已持有句柄时不会关闭它，而是直接返回失败；
+     * 需要重建时先调用 close()。适用于需要先设置地址复用等选项再绑定的场景。
      *
      * @param address 决定地址族的地址，IPv4 对应 AF_INET，IPv6 对应 AF_INET6。
-     * @return 创建成功返回 true；地址无效或系统调用失败返回 false，并已记录日志。
+     * @return 创建成功返回 true；已持有句柄、地址无效或系统调用失败返回 false，并已记录日志。
      */
     bool open(const IPAddress& address);
 
@@ -241,7 +241,8 @@ public:
      *
      * @param address 绑定地址，包含 IP 与端口；端口为 0 时由系统分配。
      * @return 成功返回 true；地址无效、地址族不一致或系统调用失败返回 false，并已记录日志。
-     * @note 绑定失败会关闭句柄，对象回到未创建状态。
+     * @note 失败不改变对象状态，已持有的句柄不会被关闭；失败后对象可能处于未创建或已创建未绑定
+     *       两种状态之一，由调用方决定是否 close()。
      */
     bool bind(const IPAddress& address);
 
@@ -266,7 +267,9 @@ protected:
     /**
      * 查询已创建套接字的地址族。
      *
-     * @return AF_INET / AF_INET6；未创建或查询失败返回 AF_UNSPEC。
+     * @return AF_INET / AF_INET6；未创建或无法确定时返回 AF_UNSPEC。
+     * @note 优先使用创建时记录的值：Windows 上对未绑定的套接字调用 getsockname 会返回
+     *       WSAEINVAL，不能用于反查地址族。
      */
     int addressFamily() const;
 
@@ -275,7 +278,8 @@ private:
      * 按平台差异创建指定地址族的套接字。
      *
      * @param family AF_INET 或 AF_INET6。
-     * @return 创建成功返回 true；库未初始化或系统调用失败返回 false。
+     * @return 创建成功返回 true；已持有句柄、库未初始化或系统调用失败返回 false。
+     * @note 已持有句柄时不会关闭它，直接返回失败，避免销毁仍在外部使用的句柄。
      */
     bool create(int family);
 
@@ -291,6 +295,7 @@ private:
     int socketType_ = 0;
     int protocol_ = 0;
     SocketHandle handle_ = INVALID_SOCKET_HANDLE;
+    int family_ = AF_UNSPEC;
 };
 
 } // namespace netproxy::net

@@ -36,7 +36,6 @@ bool TCPSocket::connect(const IPAddress& address) {
     if (::connect(nativeHandle(), address.data(), address.length()) != 0) {
         const std::string error = lastErrorMessage();
         Log::warning("TCP connect 失败 ", address.toString(), ": ", error);
-        close();
         return false;
     }
 
