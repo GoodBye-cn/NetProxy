@@ -160,6 +160,7 @@ private:
     std::uint32_t localNodeId_ = 0;
     PeerConfig config_;
     core::TaskLoop& business_;
+    PacketSender sender_;
 
     std::unordered_map<std::uint32_t, std::shared_ptr<PeerConnection>> connections_;
     std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> pendingStreams_;

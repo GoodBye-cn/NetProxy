@@ -9,6 +9,8 @@
 #include <thread>
 #include <vector>
 
+#include "Task.h"
+
 namespace netproxy::core {
 
 /**
@@ -19,8 +21,6 @@ namespace netproxy::core {
  */
 class TaskLoop final {
 public:
-    using Task = std::function<void()>;
-
     // 构造循环，不启动线程。
     TaskLoop();
 

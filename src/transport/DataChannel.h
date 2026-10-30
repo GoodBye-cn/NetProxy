@@ -5,6 +5,7 @@
 #include <functional>
 #include <string>
 
+#include "TransportTypes.h"
 #include "core/IoLoop.h"
 #include "net/Socket.h"
 #include "net/UDPSocket.h"
@@ -79,6 +80,14 @@ public:
      */
     void send(const std::string& packet, const net::IPAddress& target);
 
+    /**
+     * 获取绑定到本通道的发送函数。
+     *
+     * @return 可直接注入给 `PeerConnection` 的回调，捕获本对象指针。
+     * @note 调用方需保证本对象比使用者活得久。
+     */
+    PacketSender sender();
+
 private:
     // I/O 线程：读取全部已到达的报文并回调。
     void handleReadable();
@@ -90,4 +99,4 @@ private:
     bool registered_ = false;
 };
 
-}
+} // namespace netproxy::transport

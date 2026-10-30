@@ -6,6 +6,7 @@
 #include <mutex>
 #include <thread>
 
+#include "Task.h"
 #include "net/EventDispatcher.h"
 
 namespace netproxy::core {
@@ -18,8 +19,6 @@ namespace netproxy::core {
  */
 class IoLoop final {
 public:
-    using Task = std::function<void()>;
-
     // 构造循环，不启动线程。
     IoLoop();
 

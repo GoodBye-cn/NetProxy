@@ -8,6 +8,10 @@ namespace netproxy::transport {
 
 DataChannel::DataChannel(core::IoLoop& io) : io_(io) {}
 
+PacketSender DataChannel::sender() {
+    return [this](const std::string& packet, const net::IPAddress& target) { send(packet, target); };
+}
+
 DataChannel::~DataChannel() {
     close();
 }

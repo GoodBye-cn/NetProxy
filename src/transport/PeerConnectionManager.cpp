@@ -32,7 +32,7 @@ bool isFrameType(std::uint8_t type) {
 
 PeerConnectionManager::PeerConnectionManager(DataChannel& channel, std::uint32_t localNodeId, const PeerConfig& config,
                                              core::TaskLoop& business)
-    : channel_(channel), localNodeId_(localNodeId), config_(config), business_(business) {}
+    : channel_(channel), localNodeId_(localNodeId), config_(config), business_(business), sender_(channel.sender()) {}
 
 PeerConnectionManager::~PeerConnectionManager() {
     stop();
@@ -319,9 +319,7 @@ std::shared_ptr<PeerConnection> PeerConnectionManager::ensureConnection(std::uin
         return existing->second;
     }
 
-    auto connection = std::make_shared<PeerConnection>(
-        peerNodeId, localNodeId_, peer, config_,
-        [this](const std::string& packet, const net::IPAddress& target) { channel_.send(packet, target); });
+    auto connection = std::make_shared<PeerConnection>(peerNodeId, localNodeId_, peer, config_, sender_);
 
     connection->setStreamHandler(
         [this, peerNodeId](std::uint32_t streamId, protocol::StreamEvent event, protocol::Reason reason) {
