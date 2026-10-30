@@ -1,8 +1,8 @@
 {
     "version": 3,
     "cmakeMinimumRequired": {
-        "major": 3,
-        "minor": 21,
+        "major": 4,
+        "minor": 2,
         "patch": 0
     },
     "configurePresets": [
@@ -57,6 +57,25 @@
             "displayName": "Windows MSVC Release",
             "description": "Visual Studio 2022 + MSVC，x64，Release 配置",
             "inherits": "windows-msvc"
+        },
+        {
+            "name": "windows-vs2026",
+            "displayName": "Windows MSVC (VS 2026) Debug",
+            "description": "Visual Studio 18 2026 + MSVC，x64，Debug 配置",
+            "inherits": "base",
+            "generator": "Visual Studio 18 2026",
+            "architecture": "x64",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "windows-vs2026-release",
+            "displayName": "Windows MSVC (VS 2026) Release",
+            "description": "Visual Studio 18 2026 + MSVC，x64，Release 配置",
+            "inherits": "windows-vs2026"
         }
     ],
     "buildPresets": [
@@ -77,6 +96,26 @@
             "name": "windows-msvc-release",
             "configurePreset": "windows-msvc-release",
             "configuration": "Release"
+        },
+        {
+            "name": "windows-vs2026",
+            "configurePreset": "windows-vs2026",
+            "configuration": "Debug",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "windows-vs2026-release",
+            "configurePreset": "windows-vs2026-release",
+            "configuration": "Release",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
         }
     ],
     "testPresets": [
@@ -108,6 +147,32 @@
             "configuration": "Release",
             "output": {
                 "outputOnFailure": true
+            }
+        },
+        {
+            "name": "windows-vs2026",
+            "configurePreset": "windows-vs2026",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "windows-vs2026-release",
+            "configurePreset": "windows-vs2026-release",
+            "configuration": "Release",
+            "output": {
+                "outputOnFailure": true
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
             }
         }
     ]

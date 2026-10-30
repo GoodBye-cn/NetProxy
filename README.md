@@ -274,14 +274,16 @@ Release 配置使用 `linux-clang-release` 预设。构建目录为 `build/linux
 ### Windows
 
 ```bash
-cmake --preset windows-msvc
-cmake --build --preset windows-msvc
-ctest --preset windows-msvc
+cmake --preset windows-vs2026
+cmake --build --preset windows-vs2026
+ctest --preset windows-vs2026
 ```
 
-Release 配置使用 `windows-msvc-release` 预设。构建目录为 `build/windows-msvc`。
+Release 配置使用 `windows-vs2026-release` 预设，构建目录为 `build/windows-vs2026`。
 
-预设使用 Unix Makefiles 和 Visual Studio 17 2022 生成器，需要 CMake 3.21 或更高版本。不使用预设时等价命令：
+Visual Studio 2022 环境改用 `windows-msvc` / `windows-msvc-release` 预设，构建目录为 `build/windows-msvc`。
+
+预设使用 Unix Makefiles、Visual Studio 17 2022 和 Visual Studio 18 2026 生成器，需要 CMake 4.2 或更高版本。不使用预设时等价命令：
 
 ```bash
 # Linux
@@ -289,8 +291,8 @@ cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 
-# Windows
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+# Windows（Visual Studio 2022 换成 "Visual Studio 17 2022"）
+cmake -S . -B build -G "Visual Studio 18 2026" -A x64
 cmake --build build --config Debug
 ctest --test-dir build -C Debug --output-on-failure
 ```
