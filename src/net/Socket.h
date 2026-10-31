@@ -185,6 +185,16 @@ public:
     void close();
 
     /**
+     * 确保套接字库可用。
+     *
+     * Windows 下首次调用执行 WSAStartup，其它平台恒为 true。直接调用 Winsock API
+     * 的代码（如唤醒通道）需要先调用本函数。
+     *
+     * @return 可继续使用返回 true；Windows 下 WSAStartup 失败返回 false。
+     */
+    static bool ensureLibrary();
+
+    /**
      * 获取最近一次 socket 操作的错误码。
      *
      * @return POSIX 为 errno，Windows 为 WSAGetLastError() 的返回值。
@@ -194,7 +204,7 @@ public:
     /**
      * 获取最近一次错误的可读描述。
      *
-     * @return 系统错误文本；Windows 下通过 FormatMessage 获取并去掉尾部换行。
+     * @return 系统错误文本（UTF-8）；Windows 下通过 FormatMessageW 获取、去掉尾部换行后转为 UTF-8。
      */
     std::string lastErrorMessage() const;
 
@@ -282,13 +292,6 @@ private:
      * @note 已持有句柄时不会关闭它，直接返回失败，避免销毁仍在外部使用的句柄。
      */
     bool create(int family);
-
-    /**
-     * 确保套接字库可用。
-     *
-     * @return 可继续使用返回 true；Windows 下 WSAStartup 失败返回 false，其它平台恒为 true。
-     */
-    static bool ensureLibrary();
 
     friend class IPAddress;
 

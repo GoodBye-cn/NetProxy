@@ -1,5 +1,7 @@
 #include "IoLoop.h"
 
+#include <chrono>
+#include <thread>
 #include <utility>
 
 namespace netproxy::core {
@@ -50,7 +52,10 @@ bool IoLoop::isRunning() const {
 
 void IoLoop::run() {
     while (running_.load()) {
-        dispatcher_.dispatch(100);
+        if (dispatcher_.dispatch(100) < 0) {
+            // 底层 poll 不可用（如唤醒通道创建失败）时避免忙等占满 CPU。
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
         runPendingTasks();
     }
 }

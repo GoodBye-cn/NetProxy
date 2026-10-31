@@ -8,6 +8,12 @@
 #include <string>
 #include <thread>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include "Log.h"
 #include "P2PService.h"
 
@@ -161,6 +167,12 @@ void handleCommand(netproxy::P2PService& service, const std::string& line) {
 } // namespace
 
 int main(int argc, char* argv[]) {
+    // 源码中的文案是 UTF-8（/utf-8），与控制台默认代码页（如 936）不一致会显示为乱码。
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#endif
+
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
 

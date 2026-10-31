@@ -46,7 +46,8 @@ std::ptrdiff_t Poller::indexOf(SocketHandle handle) const {
 }
 
 Poller::Poller() {
-    if (!wakeup_.open()) {
+    wakeupReady_ = wakeup_.open();
+    if (!wakeupReady_) {
         Log::error("Poller 初始化失败: 无法创建唤醒通道");
     }
 }
@@ -143,8 +144,8 @@ void Poller::wakeup() {
 int Poller::poll(int timeoutMs, std::vector<ReadyEvent>& readyEvents) {
     readyEvents.clear();
 
-    if (!wakeup_.isOpen()) {
-        Log::error("poll 失败: 唤醒通道未就绪");
+    if (!wakeupReady_) {
+        // 构造阶段已记录过失败原因，这里不再逐次输出，避免调用方循环时刷屏。
         return -1;
     }
 

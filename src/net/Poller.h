@@ -117,7 +117,8 @@ public:
      *
      * @param timeoutMs 超时毫秒数，负数表示无限等待。
      * @param readyEvents 输出就绪事件列表，调用前会被清空。
-     * @return 就绪事件数；超时或被唤醒返回 0；失败返回 -1，并已记录日志。
+     * @return 就绪事件数；超时或被唤醒返回 0；失败返回 -1。唤醒通道创建失败时构造阶段已记录
+     *         日志，此处不再重复输出。
      * @note 被唤醒但没有用户事件时同样返回 0，调用方应在循环中继续调用。
      */
     int poll(int timeoutMs, std::vector<ReadyEvent>& readyEvents);
@@ -150,6 +151,7 @@ private:
     mutable std::mutex mutex_;
     std::vector<PollDescriptor> entries_;
     WakeupChannel wakeup_;
+    bool wakeupReady_ = false;                  // 唤醒通道是否创建成功，失败时 poll 返回 -1
     std::atomic<bool> wakeupRequested_{false}; // true 表示用户调用 wakeup()，poll 应立即返回
 };
 

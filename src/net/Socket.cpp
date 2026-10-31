@@ -223,17 +223,25 @@ int Socket::lastErrorCode() const {
 std::string Socket::lastErrorMessage() const {
 #ifdef _WIN32
     const int errorCode = WSAGetLastError();
-    char* buffer = nullptr;
+    wchar_t* buffer = nullptr;
     const DWORD length =
-        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                        nullptr, static_cast<DWORD>(errorCode), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                       reinterpret_cast<LPSTR>(&buffer), 0, nullptr);
+                       reinterpret_cast<LPWSTR>(&buffer), 0, nullptr);
 
     if (length == 0 || buffer == nullptr) {
         return "socket error " + std::to_string(errorCode);
     }
 
-    std::string message(buffer, length);
+    // 系统文本是 UTF-16，统一转成 UTF-8，与源码中的文案保持同一编码。
+    std::string message;
+    const int utf8Length = static_cast<int>(
+        WideCharToMultiByte(CP_UTF8, 0, buffer, static_cast<int>(length), nullptr, 0, nullptr, nullptr));
+    if (utf8Length > 0) {
+        message.resize(static_cast<std::size_t>(utf8Length));
+        WideCharToMultiByte(CP_UTF8, 0, buffer, static_cast<int>(length), message.data(), utf8Length, nullptr,
+                            nullptr);
+    }
     LocalFree(buffer);
 
     while (!message.empty() && (message.back() == '\r' || message.back() == '\n')) {

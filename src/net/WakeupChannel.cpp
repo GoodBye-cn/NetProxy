@@ -60,6 +60,13 @@ bool WakeupChannel::open() {
     close();
 
 #ifdef _WIN32
+    // 唤醒通道直接调用 Winsock，需先确保套接字库已初始化，否则 socket 返回
+    // WSANOTINITIALISED（10093）。
+    if (!Socket::ensureLibrary()) {
+        Log::error("创建唤醒通道失败: 套接字库初始化失败");
+        return false;
+    }
+
     const SocketHandle reader = createWakeupSocket();
     const SocketHandle writer = createWakeupSocket();
     if (reader == INVALID_SOCKET_HANDLE || writer == INVALID_SOCKET_HANDLE) {
