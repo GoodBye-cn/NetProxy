@@ -1,3 +1,5 @@
 .gradle/
 build/
 local.properties
+# 预编译 native 库由 CMake 产物拷入，不进版本库
+src/main/jniLibs/

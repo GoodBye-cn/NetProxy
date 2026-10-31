@@ -222,8 +222,12 @@ inline constexpr char SET_LISTENER_SIGNATURE[] = "(JLcom/open/netproxy/P2PServic
 - AAR 内 `jni/<abi>/libnetproxy.so` 与 `libc++_shared.so`；`abiFilters` 固定 `arm64-v8a` + `armeabi-v7a`。
 - `libnetproxy.so` 已 16 KB 页对齐，满足 Play 对 targetSdk 35+ 的要求。
 - 本地交付：`sdk/android/build/outputs/aar/netproxy-android-sdk-release.aar`，不接 Maven。
-- Gradle：AGP 8.7.3、`compileSdk 35`、`minSdk 21`、Java 8；`.so` 由 `build.gradle.kts` 头部命令拷入 `jniLibs/`。
 - module 声明 `INTERNET` 与 `CHANGE_WIFI_MULTICAST_STATE`，组播锁由宿主获取。
+- 已验证的构建环境：SDK `/opt/android/sdk`（platform-tools 37.0.1、`platforms;android-35` rev2、build-tools 35.0.0）、Gradle `/opt/gradle/gradle-8.9`（显式版本路径，无软链）、JDK 21。
+- **ABI 与 NDK sysroot 目录名不同**：`arm64-v8a` → `aarch64-linux-android`，`armeabi-v7a` → `arm-linux-androideabi`；直接用 ABI 名拼路径会找不到 `libc++_shared.so`。
+- 打包前先 `llvm-strip --strip-unneeded`：`libnetproxy.so` 由 5.1 MB / 4.6 MB 降至 323 KB / 206 KB，AAR 由 3.5 MB 降至 **1.1 MB**。
+- 实测 AAR 内容：`classes.jar`、`AndroidManifest.xml`（minSdk 21 + 两个权限）、`proguard.txt`、`R.txt`、`jni/arm64-v8a/*`、`jni/armeabi-v7a/*`；`arm64` 库为 ELF64/AArch64、SONAME `libnetproxy.so`、`NEEDED liblog.so`、LOAD 对齐 `0x4000`。
+- wrapper 已生成（`gradlew`、`gradlew.bat`、`gradle/wrapper/`）；其 `distributionUrl` 指向 `services.gradle.org`，该域名重定向到 GitHub，本机网络不可达，因此本机用系统 `gradle`，或把 `distributionUrl` 换成镜像。`jniLibs/` 与 `local.properties` 已加入 `.gitignore`。
 
 ## 8. 兼容与版本
 
@@ -239,17 +243,20 @@ inline constexpr char SET_LISTENER_SIGNATURE[] = "(JLcom/open/netproxy/P2PServic
 | native 签名 | `javap` 与 C++ 注册表 **17/17 一致** |
 | 公开面 | 6 个 public 类型；`P2PServiceNative`/`CallbackAdapter`/`NativeLoader` 均无 `public` |
 | native 产物 | 未变，无需重编；三个 ABI 的 `.so` 仍为 `com/open/netproxy/P2PServiceNative` |
-| AAR 构建 | 待环境（无 Android SDK） |
+| AAR 构建 | 通过：`netproxy-android-sdk-release.aar` **1.1 MB** |
+| AAR 内容 | `classes.jar`（15 项）、manifest（minSdk 21 + 2 权限）、`proguard.txt`、两个 ABI 的 `.so` |
+| `.so` 校验 | ELF64/AArch64、SONAME 正确、`NEEDED liblog.so`、LOAD 对齐 `0x4000` |
 | 仪器测试 | 待真机：`loadLibrary`、`start`、`onPeer`/`onData`、`close` 幂等 |
-| R8 | 待环境：`mapping.txt` 中两个 keep 目标未被重命名 |
+| R8 | 待消费方 App 启用 minify 后检查 `mapping.txt` |
 
 ## 10. 实施状态
 
 1. ✅ native 侧包名与常量单源。
 2. ✅ Java 骨架（10 个文件）与 Gradle 模块。
 3. ✅ 公开类重命名为 `P2PService` 家族，移除 `NativeBridge`。
-4. ⏳ 仪器测试用例（`androidTest`）：建议覆盖 start/stop 幂等、peers/streams 解包、回调线程、关闭后异常。
-5. ⏳ AAR 组装与真机冒烟。
+4. ✅ AAR 组装（`gradle assembleRelease`，1.1 MB）。
+5. ⏳ 仪器测试用例（`androidTest`）：覆盖 start/stop 幂等、peers/streams 解包、回调线程、关闭后异常。
+6. ⏳ 真机冒烟与 R8 校验。
 
 ## 11. 风险
 
