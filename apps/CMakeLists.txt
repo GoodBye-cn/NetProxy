@@ -1,13 +1,8 @@
-add_executable(netproxy_cli
-    Main.cpp
+# 每个子目录产出一个可执行文件，新增 Demo 时在列表里加一项。
+set(NETPROXY_APP_DIRS
+    demo
 )
 
-find_package(Threads REQUIRED)
-
-target_link_libraries(netproxy_cli
-    PRIVATE
-        NetProxy::netproxy
-        Threads::Threads
-)
-
-netproxySetWarnings(netproxy_cli)
+foreach(app_dir IN LISTS NETPROXY_APP_DIRS)
+    add_subdirectory(${app_dir})
+endforeach()

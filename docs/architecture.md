@@ -702,6 +702,68 @@ class P2PService {
 
 `P2PService` 用 `node->findPeer()` 拿到对端地址后调用 `connections->openStream()`；连接层不感知会话语义，流即通道。
 
+### 4.6 应用与 Demo 组织
+
+`apps/` 只做汇总，每个子目录产出一个可执行文件；新增 Demo 只需加目录和一行 CMake。
+
+```
+apps/
+├── CMakeLists.txt      # 汇总：遍历 NETPROXY_APP_DIRS
+└── demo/
+    ├── CMakeLists.txt  # 可执行文件定义
+    └── Main.cpp        # 交互式 CLI
+```
+
+`apps/CMakeLists.txt`：
+
+```cmake
+set(NETPROXY_APP_DIRS
+    demo
+)
+
+foreach(app_dir IN LISTS NETPROXY_APP_DIRS)
+    add_subdirectory(${app_dir})
+endforeach()
+```
+
+`apps/demo/CMakeLists.txt` 链接 `NetProxy::netproxy` 与 `Threads::Threads`，并把 VS 多配置的输出目录统一到 `bin`：
+
+```cmake
+set_target_properties(netproxy_cli PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/bin
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/bin
+)
+```
+
+产物路径统一为：
+
+```
+build/<preset>/bin/netproxy_cli          # Linux
+build/windows-msvc/bin/netproxy_cli.exe  # Windows
+```
+
+平台差异：
+
+| 项 | Linux | Windows |
+| --- | --- | --- |
+| 生成器 | Ninja + Clang | Visual Studio 17 2022 |
+| 信号 | `std::signal(SIGINT/SIGTERM)` | 同样可用 |
+| Socket 初始化 | 无 | `WSAStartup` 由 `net/Socket.cpp` 负责 |
+| UNC 路径 | 无 | 项目在 WSL 文件系统时需复制到本地盘 |
+| 防火墙 | 无 | 首次运行需允许「专用网络」 |
+
+新增 Demo 时在列表里加一行：
+
+```cmake
+set(NETPROXY_APP_DIRS
+    demo
+    chat
+)
+```
+
+平台专属 Demo 用 `if(WIN32)` / `if(UNIX)` 追加目录，不影响通用列表。
+
 ## 5. 线程间数据流
 
 ### 5.1 节点发现

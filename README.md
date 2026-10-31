@@ -20,7 +20,8 @@ C++17 网络代理项目，使用 CMake 构建。Linux 使用 Clang，Windows �
 | `src/node/` | 节点管理器、组播发现通道与节点表 |
 | `src/transport/` | 连接、流与可靠传输 |
 | `src/protocol/` | 连接协议常量与类型 |
-| `apps/` | 可执行程序 |
+| `apps/` | 可执行程序汇总，每个子目录产出一个 Demo |
+| `apps/demo/` | 交互式命令行测试程序 |
 | `tests/` | 测试 |
 | `docs/` | 文档 |
 | `cmake/` | CMake 包配置模板 |
@@ -162,8 +163,14 @@ service.stop();
 `netproxy_cli` 启动后进入交互模式，可以手动开流与发送数据：
 
 ```bash
+# Linux
 ./build/linux-clang/bin/netproxy_cli --node-id 1 --port 7001
+
+# Windows
+.\build\windows-msvc\bin\netproxy_cli.exe --node-id 2 --port 7002
 ```
+
+两个平台的可执行文件都输出到构建目录的 `bin/` 下。
 
 | 命令 | 说明 |
 | --- | --- |
