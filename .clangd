@@ -1,3 +1,11 @@
 CompileFlags:
   # 编译数据库由 CMake 生成在预设的构建目录中
   CompilationDatabase: build/linux-clang
+
+---
+# jni/ 只参与 Android 构建，桌面数据库里没有对应条目，
+# 这里为该目录单独切到 Android 的编译数据库，避免编辑器报 'jni.h' file not found。
+If:
+  PathMatch: jni/.*
+CompileFlags:
+  CompilationDatabase: build/android-arm64-v8a

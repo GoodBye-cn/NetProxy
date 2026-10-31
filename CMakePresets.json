@@ -76,6 +76,52 @@
             "displayName": "Windows MSVC (VS 2026) Release",
             "description": "Visual Studio 18 2026 + MSVC，x64，Release 配置",
             "inherits": "windows-vs2026"
+        },
+        {
+            "name": "android-base",
+            "displayName": "Android 交叉编译基础配置",
+            "description": "NDK 工具链 + Ninja，JNI 并入核心库，只产出一个 .so；不编译测试与 CLI",
+            "hidden": true,
+            "inherits": "base",
+            "generator": "Ninja",
+            "toolchainFile": "$env{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "ANDROID_PLATFORM": "android-24",
+                "ANDROID_STL": "c++_shared",
+                "ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES": "ON",
+                "BUILD_SHARED_LIBS": "ON",
+                "NETPROXY_BUILD_JNI": "ON",
+                "NETPROXY_BUILD_TESTS": "OFF",
+                "NETPROXY_BUILD_APPS": "OFF"
+            }
+        },
+        {
+            "name": "android-arm64-v8a",
+            "displayName": "Android arm64-v8a",
+            "description": "64 位 ARM，主流真机",
+            "inherits": "android-base",
+            "cacheVariables": {
+                "ANDROID_ABI": "arm64-v8a"
+            }
+        },
+        {
+            "name": "android-armeabi-v7a",
+            "displayName": "Android armeabi-v7a",
+            "description": "32 位 ARM，老设备兼容",
+            "inherits": "android-base",
+            "cacheVariables": {
+                "ANDROID_ABI": "armeabi-v7a"
+            }
+        },
+        {
+            "name": "android-x86_64",
+            "displayName": "Android x86_64",
+            "description": "x86_64 模拟器",
+            "inherits": "android-base",
+            "cacheVariables": {
+                "ANDROID_ABI": "x86_64"
+            }
         }
     ],
     "buildPresets": [
@@ -116,6 +162,18 @@
                 "lhs": "${hostSystemName}",
                 "rhs": "Windows"
             }
+        },
+        {
+            "name": "android-arm64-v8a",
+            "configurePreset": "android-arm64-v8a"
+        },
+        {
+            "name": "android-armeabi-v7a",
+            "configurePreset": "android-armeabi-v7a"
+        },
+        {
+            "name": "android-x86_64",
+            "configurePreset": "android-x86_64"
         }
     ],
     "testPresets": [

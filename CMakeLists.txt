@@ -21,6 +21,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 option(NETPROXY_BUILD_APPS "Build NetProxy applications" ON)
 option(NETPROXY_BUILD_TESTS "Build NetProxy tests" ON)
+option(NETPROXY_BUILD_JNI "Embed the JNI bridge into the Android shared library" OFF)
 
 # ------------------------------------------------------------------ 工具链检查
 if(WIN32 AND NOT MSVC)
@@ -40,6 +41,15 @@ endfunction()
 
 # ------------------------------------------------------------------ 子项目
 add_subdirectory(src)
+
+# JNI 桥接层只在 Android 上并入共享库（单 .so 出库形态）。
+if(NETPROXY_BUILD_JNI)
+    if(ANDROID)
+        add_subdirectory(jni)
+    else()
+        message(WARNING "NETPROXY_BUILD_JNI 仅在 Android 交叉编译下生效，当前配置已忽略。")
+    endif()
+endif()
 
 if(NETPROXY_BUILD_APPS)
     add_subdirectory(apps)

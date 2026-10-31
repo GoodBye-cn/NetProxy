@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- UDP 收发与组播发现 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 部分设备需要 MulticastLock 才能稳定接收组播，由宿主 App 侧获取 -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
+</manifest>
