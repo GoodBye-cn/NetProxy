@@ -2,6 +2,7 @@
 
 #include "Log.h"
 
+#include <chrono>
 #include <cstring>
 
 #ifndef _WIN32
@@ -135,6 +136,7 @@ void Poller::clear() {
 }
 
 void Poller::wakeup() {
+    wakeupRequested_.store(true);
     wakeup_.notify();
 }
 
@@ -146,52 +148,76 @@ int Poller::poll(int timeoutMs, std::vector<ReadyEvent>& readyEvents) {
         return -1;
     }
 
-    std::vector<PollDescriptor> snapshot;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        snapshot = entries_;
-    }
+    const auto start = std::chrono::steady_clock::now();
+    int remainingMs = timeoutMs;
 
-    PollDescriptor wakeupDescriptor{};
-    wakeupDescriptor.fd = wakeup_.handle();
-    wakeupDescriptor.events = POLLIN;
-    wakeupDescriptor.revents = 0;
-    snapshot.insert(snapshot.begin(), wakeupDescriptor);
+    while (true) {
+        std::vector<PollDescriptor> snapshot;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            snapshot = entries_;
+        }
+
+        PollDescriptor wakeupDescriptor{};
+        wakeupDescriptor.fd = wakeup_.handle();
+        wakeupDescriptor.events = POLLIN;
+        wakeupDescriptor.revents = 0;
+        snapshot.insert(snapshot.begin(), wakeupDescriptor);
 
 #ifdef _WIN32
-    const int result = ::WSAPoll(snapshot.data(), static_cast<ULONG>(snapshot.size()), timeoutMs);
+        const int result = ::WSAPoll(snapshot.data(), static_cast<ULONG>(snapshot.size()), remainingMs);
 #else
-    const int result = ::poll(snapshot.data(), static_cast<nfds_t>(snapshot.size()), timeoutMs);
+        const int result = ::poll(snapshot.data(), static_cast<nfds_t>(snapshot.size()), remainingMs);
 #endif
 
-    if (result < 0) {
+        if (result < 0) {
 #ifndef _WIN32
-        if (errno == EINTR) {
+            if (errno == EINTR) {
+                return 0;
+            }
+            Log::warning("poll 失败: ", std::strerror(errno));
+#else
+            Log::warning("poll 失败: ", WSAGetLastError());
+#endif
+            return -1;
+        }
+
+        const bool wakeupReady = snapshot[0].revents != 0;
+        if (wakeupReady) {
+            wakeup_.drain();
+        }
+
+        for (std::size_t index = 1; index < snapshot.size(); ++index) {
+            if (snapshot[index].revents == 0) {
+                continue;
+            }
+
+            ReadyEvent ready;
+            ready.handle = snapshot[index].fd;
+            ready.events = toEvents(snapshot[index].revents);
+            readyEvents.push_back(ready);
+        }
+
+        // 用户主动唤醒：立即返回，不等待业务事件。
+        if (wakeupReady && readyEvents.empty() && wakeupRequested_.exchange(false)) {
             return 0;
         }
-        Log::warning("poll 失败: ", std::strerror(errno));
-#else
-        Log::warning("poll 失败: ", WSAGetLastError());
-#endif
-        return -1;
-    }
 
-    if (snapshot[0].revents != 0) {
-        wakeup_.drain();
-    }
-
-    for (std::size_t index = 1; index < snapshot.size(); ++index) {
-        if (snapshot[index].revents == 0) {
-            continue;
+        // 有业务事件或超时无事件时结束。
+        if (!readyEvents.empty() || result == 0) {
+            return static_cast<int>(readyEvents.size());
         }
 
-        ReadyEvent ready;
-        ready.handle = snapshot[index].fd;
-        ready.events = toEvents(snapshot[index].revents);
-        readyEvents.push_back(ready);
+        // 只有注册表变更的通知：重新取快照并等待剩余时间。
+        if (timeoutMs > 0) {
+            const auto elapsed =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+            remainingMs = timeoutMs - static_cast<int>(elapsed.count());
+            if (remainingMs <= 0) {
+                return 0;
+            }
+        }
     }
-
-    return static_cast<int>(readyEvents.size());
 }
 
 } // namespace netproxy::net

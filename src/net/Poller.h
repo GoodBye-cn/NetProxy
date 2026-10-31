@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -149,6 +150,7 @@ private:
     mutable std::mutex mutex_;
     std::vector<PollDescriptor> entries_;
     WakeupChannel wakeup_;
+    std::atomic<bool> wakeupRequested_{false}; // true 表示用户调用 wakeup()，poll 应立即返回
 };
 
 } // namespace netproxy::net
