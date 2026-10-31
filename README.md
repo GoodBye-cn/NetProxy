@@ -283,7 +283,7 @@ Release 配置使用 `windows-vs2026-release` 预设，构建目录为 `build/wi
 
 Visual Studio 2022 环境改用 `windows-msvc` / `windows-msvc-release` 预设，构建目录为 `build/windows-msvc`。
 
-预设使用 Unix Makefiles、Visual Studio 17 2022 和 Visual Studio 18 2026 生成器，需要 CMake 4.2 或更高版本。不使用预设时等价命令：
+预设文件本身要求 CMake 3.21 或更高版本；其中 `windows-vs2026` 使用 Visual Studio 18 2026 生成器，需要 CMake 4.2 及以上，且仅在 Windows 上可见。不使用预设时等价命令：
 
 ```bash
 # Linux
