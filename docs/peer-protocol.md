@@ -31,13 +31,25 @@ UDP 数据端口
 
 ```
 src/protocol/
-└── Protocol.h                 # magic、version、类型常量
+├── Protocol.h                 # magic、version、类型常量
+└── Frame.h                    # PeerFrame（连接层与流层共用）
 
 src/transport/
-├── DataChannel.h/.cpp         # 数据 UDP socket
-├── PeerProtocol.h/.cpp        # 握手报文与连接帧编解码
-├── PeerConnection.h/.cpp      # 单连接：可靠层 + 流表 + 心跳
-└── PeerConnectionManager.h/.cpp  # 按 peerNodeId 管理连接
+├── connection/                # —— 连接层 ——
+│   ├── PeerConnection.h/.cpp  # 单连接：握手、序号、窗口、重传、心跳、有序交付
+│   ├── PeerProtocol.h/.cpp    # 握手报文与连接帧编解码
+│   ├── PeerConfig.h           # 连接参数
+│   └── TransportTypes.h       # PacketSender
+│
+├── stream/                    # —— 流层 ——
+│   ├── Stream.h/.cpp          # 单条流的状态与回调
+│   ├── StreamMux.h/.cpp       # 流表、流信令、数据分发、并发上限
+│   ├── StreamConfig.h         # 流参数（maxStreams）
+│   └── StreamTypes.h          # StreamState、StreamRecord
+│
+├── DataChannel.h/.cpp         # 数据 UDP socket（组装层）
+├── PeerSession.h/.cpp         # 每对端会话：连接 + 流（组装层）
+└── PeerSessionManager.h/.cpp  # 报文路由与会话表（组装层）
 
 src/node/                      # 组播发现与节点表（不变）
 src/core/                      # IoLoop、TaskLoop（不变）
@@ -54,6 +66,15 @@ P2PService ──> transport ──> protocol
 ```
 
 `transport` 不依赖 `node`，`node` 不依赖 `transport`。
+
+`transport` 内部再分两层，边界由 CMake 的 OBJECT 目标强制（见 [transport-layer-split.md](transport-layer-split.md)）：
+
+```
+PeerSession ──> PeerConnection ──> protocol（Frame.h / Protocol.h）
+            └─> StreamMux
+```
+
+流层**不链接也不 include** 连接层：发帧通过注入的 `FrameSender`，收帧通过 `onFrame`，关闭通过 `onConnectionClosed` 通知。
 
 ## 3. 类图
 
@@ -72,6 +93,7 @@ classDiagram
         -IPAddress peer_
         -PeerConfig config_
         -Sender sender_
+        -HasStreams hasStreams_
         -ConnectionState state_
         -uint32 helloNonce_
         -int helloRetries_
@@ -81,26 +103,70 @@ classDiagram
         -deque~PendingFrame~ sendQueue_
         -uint32 receiveNext_
         -map~uint32, PeerFrame~ receiveBuffer_
-        -map~uint32, StreamState~ streams_
         -int pingMisses_
         +open() bool
         +close(uint8) void
+        +send(PeerFrame) bool
         +onFrame(PeerFrame) void
         +onHelloAck(PeerFrame) void
         +tick(time_point) void
-        +openStream(uint32) bool
-        +closeStream(uint32) bool
-        +sendData(uint32, void*, size_t) bool
+        +setFrameHandler(FrameHandler) void
+        +setCloseHandler(CloseHandler) void
         +isConnected() bool
     }
 
-    class PeerConnectionManager {
+    class StreamMux {
+        -uint32 peerNodeId_
+        -StreamConfig config_
+        -FrameSender sender_
+        -bool connected_
+        -mutex mutex_
+        -unordered_map~uint32, Stream~ streams_
+        -deque~uint32~ pending_
+        +onFrame(PeerFrame) void
+        +onConnectionUp() void
+        +onConnectionClosed(uint8) void
+        +openStream(uint32) bool
+        +sendData(uint32, void*, size_t) bool
+        +closeStream(uint32) bool
+        +hasStreams() bool
+        +isStreamOpen(uint32) bool
+        +ownsStream(uint32) bool
+        +streams() vector~StreamRecord~
+    }
+
+    class Stream {
+        -uint32 streamId_
+        -uint32 peerNodeId_
+        -bool locallyInitiated_
+        -StreamState state_
+        +markOpen() bool
+        +deliverData(char*, size_t) void
+        +close(uint8, uint8) void
+    }
+
+    class PeerSession {
+        -PeerConnection connection_
+        -StreamMux streams_
+        -atomic~bool~ connected_
+        +connect() bool
+        +acceptHandshake() void
+        +onFrame(PeerFrame) void
+        +tick(time_point) void
+        +openStream(uint32) bool
+        +sendData(uint32, void*, size_t) bool
+        +closeStream(uint32) bool
+        +ownsStream(uint32) bool
+        +isConnected() bool
+    }
+
+    class PeerSessionManager {
         -DataChannel& channel_
         -uint32 localNodeId_
-        -PeerConfig config_
+        -PeerConfig peerConfig_
+        -StreamConfig streamConfig_
         -TaskLoop& business_
-        -map~uint32, shared_ptr~PeerConnection~~ connections_
-        -map~uint32, vector~uint32~~ pendingStreams_
+        -map~uint32, shared_ptr~PeerSession~~ sessions_
         -StreamHandler streamHandler_
         -DataHandler dataHandler_
         +start() bool
@@ -110,6 +176,8 @@ classDiagram
         +closeStream(uint32) bool
         +sendData(uint32, void*, size_t) bool
         +isConnected(uint32) bool
+        +isStreamOpen(uint32) bool
+        +streams() vector~StreamRecord~
         +setStreamHandler(StreamHandler) void
         +setDataHandler(DataHandler) void
         -onDatagram(IPAddress, char*, size_t) void
@@ -126,9 +194,12 @@ classDiagram
         +send(string, IPAddress) void
     }
 
-    PeerConnectionManager *-- PeerConnection
-    PeerConnectionManager --> DataChannel
-    PeerConnectionManager ..> PeerProtocol
+    PeerSessionManager *-- PeerSession
+    PeerSessionManager --> DataChannel
+    PeerSession *-- PeerConnection
+    PeerSession *-- StreamMux
+    StreamMux *-- Stream
+    PeerSession ..> PeerProtocol
     PeerConnection ..> PeerProtocol
 ```
 
@@ -174,7 +245,7 @@ bool decodeFrame(const void* data, std::size_t size, PeerFrame& frame);
 
 ### 4.2 `transport::PeerConnection`
 
-**作用**：一条节点对连接的传输层实现，负责握手、序号、窗口、重传、心跳与流表。
+**作用**：一条节点对连接的可靠有序帧通道，负责握手、序号、窗口、重传、心跳与有序交付。流表与流信令不在本类，见 4.3。
 
 **成员**：
 
@@ -195,30 +266,29 @@ bool decodeFrame(const void* data, std::size_t size, PeerFrame& frame);
 | `duplicateAcks_` | `int` | 连续重复 ACK 次数 |
 | `receiveNext_` | `uint32` | 期望收到的下一个序号 |
 | `receiveBuffer_` | `map<uint32, PeerFrame>` | 乱序缓存 |
-| `streams_` | `map<uint32, StreamState>` | 流表，`0` 为连接控制 |
+| `hasStreams_` | `HasStreams` | 活跃流判定，由 `PeerSession` 注入 |
 | `pingMisses_` | `int` | 连续心跳失败次数 |
 | `lastActive_` | `time_point` | 最近收发时间 |
-| `streamHandler_` | `StreamCallback` | 流事件回调 |
-| `dataHandler_` | `DataCallback` | 数据回调 |
+| `frameHandler_` | `FrameHandler` | 有序交付回调 |
+| `closeHandler_` | `CloseHandler` | 连接进入 Closed 的回调 |
 
 **接口**：
 
 ```cpp
 using Sender = std::function<void(const std::string& packet, const net::IPAddress& target)>;
-using StreamCallback = std::function<void(std::uint32_t streamId, StreamEvent event, std::uint8_t reason)>;
-using DataCallback = std::function<void(std::uint32_t streamId, const char* data, std::size_t size)>;
+using FrameHandler = std::function<void(const PeerFrame&)>;    // 有序交付
+using CloseHandler = std::function<void(Reason reason)>;       // 进入 Closed 时触发一次
+using HasStreams = std::function<bool()>;                // 空闲关闭判定
 
 PeerConnection(std::uint32_t peerNodeId, std::uint32_t localNodeId, const net::IPAddress& peer,
-               const PeerConfig& config, Sender sender, core::TaskLoop& business);
+               const PeerConfig& config, Sender sender, HasStreams hasStreams = {});
 
 bool open();                                   // 发出 Hello，进入 Connecting
-void onHelloAck(const PeerFrame& frame);       // 校验 nonce，进入 Connected
+void onHelloAck(const HelloMessage& message);  // 校验 nonce，进入 Connected
 void onFrame(const PeerFrame& frame);          // 连接帧入口
 void tick(std::chrono::steady_clock::time_point now);  // 重传、心跳、超时
 
-bool openStream(std::uint32_t streamId);
-bool closeStream(std::uint32_t streamId);
-bool sendData(std::uint32_t streamId, const void* data, std::size_t size);
+bool send(PeerFrame frame);                    // 可靠有序发送；未连接或超长返回 false
 
 bool isConnected() const;
 ConnectionState state() const;
@@ -232,16 +302,85 @@ void close(Reason reason);
 | --- | --- |
 | `sendFrame(const PeerFrame&)` | 分配序号、入队、发送 |
 | `flushWindow()` | 窗口可用时发送排队帧 |
-| `handleStreamFrame(const PeerFrame&)` | 处理 `StreamOpen/Accept/Reject/Close` |
-| `deliverFrame(const PeerFrame&)` | 按序交付 Data 或流事件 |
-| `closeAllStreams(Reason)` | 连接断开时清理所有流 |
+| `receiveFrame(const PeerFrame&)` | 按 `connectionSeq` 去重、缓存、按序交付 |
+| `deliverOrdered(const PeerFrame&)` | 把帧交给 `FrameHandler` |
+| `sendControl(FrameType, payload)` | 发送 `Ping` / `Close` 控制帧 |
+| `enterClosed(Reason)` | 唯一的关闭出口：置状态并触发 `CloseHandler` |
 | `sendAck()` | 回纯 ACK |
 
-**不做的事**：不读 socket、不建 socket、不判断节点是否在 `PeerTable`。
+**不做的事**：不读 socket、不建 socket、不判断节点是否在 `PeerTable`、不维护流表。
 
-### 4.3 `transport::PeerConnectionManager`
+### 4.3 `transport::StreamMux` / `transport::Stream`
 
-**作用**：数据 socket 的唯一入口，按 `peerNodeId` 管理连接，处理「连接未就绪时排队开流」。
+**作用**：流层的唯一流表与流信令入口。`Stream` 只保存单条流的状态与回调，`StreamMux` 负责收发改帧、并发上限与排队。
+
+**`StreamMux` 接口**：
+
+```cpp
+using StreamHandler = std::function<void(std::uint32_t streamId, std::uint32_t peerNodeId,
+                                         StreamEvent event, Reason reason)>;
+using DataHandler = std::function<void(std::uint32_t streamId, std::uint32_t peerNodeId,
+                                       const char* data, std::size_t size)>;
+using FrameSender = std::function<bool(PeerFrame frame)>;   // 注入连接层可靠发送
+
+StreamMux(std::uint32_t peerNodeId, const StreamConfig& config, FrameSender sender);
+
+void onFrame(const PeerFrame& frame);                 // 只处理 Data / Stream*
+void onConnectionUp();                                // 补发排队开流
+void onConnectionClosed(Reason reason);               // 已开流 Closed、排队流 Rejected(Timeout)
+
+bool openStream(std::uint32_t streamId);              // 流号由调用线程生成
+bool sendData(std::uint32_t streamId, const void* data, std::size_t size);
+bool closeStream(std::uint32_t streamId);
+
+bool hasStreams() const;
+bool isStreamOpen(std::uint32_t streamId) const;
+bool ownsStream(std::uint32_t streamId) const;
+std::vector<StreamRecord> streams() const;
+```
+
+**内部逻辑**：
+
+| 场景 | 行为 |
+| --- | --- |
+| `openStream` 且连接已就绪 | 建 `Stream(Opening)` 并发 `StreamOpen` |
+| `openStream` 且连接未就绪 | 建 `Stream(Opening)`，流号入 `pending_`，`onConnectionUp` 时补发 |
+| 收到 `StreamOpen`（新流） | 建 `Stream(Open)`、回 `StreamAccept`、回调 `Opened` |
+| 收到 `StreamOpen`（已存在） | 只重发 `StreamAccept`，不重复回调 |
+| 收到 `StreamOpen`（超 `maxStreams`） | 回 `StreamReject(Error)`，不建流 |
+| 收到 `StreamAccept` / `StreamReject` / `StreamClose` | 推进或删除流，回调对应事件 |
+| 收到 `Data` | 按 `streamId` 分发；找不到则丢弃并计数 |
+
+**锁边界**：`mutex_` 只保护流表与 `pending_`，所有回调（`StreamHandler` / `DataHandler` / `FrameSender`）都在解锁后触发，保证应用在数据回调里重入 `sendData` 不会自锁。
+
+### 4.4 `transport::PeerSession`
+
+**作用**：每对端一个会话，把一条连接与其上的流组合起来，只做转调与状态同步。
+
+```cpp
+PeerSession(std::uint32_t localNodeId, std::uint32_t peerNodeId, const net::IPAddress& peer,
+            const PeerConfig& peerConfig, const StreamConfig& streamConfig, PacketSender sender);
+
+bool connect();
+void acceptHandshake();   // 内部：状态变为 Connected 后调 streams_.onConnectionUp()
+void onHelloAck(const HelloMessage& message);
+void onFrame(const PeerFrame& frame);
+void tick(std::chrono::steady_clock::time_point now);
+void close(Reason reason);
+
+bool openStream(std::uint32_t streamId);
+bool sendData(std::uint32_t streamId, const void* data, std::size_t size);
+bool closeStream(std::uint32_t streamId);
+bool ownsStream(std::uint32_t streamId) const;
+bool isStreamOpen(std::uint32_t streamId) const;
+std::vector<StreamRecord> streams() const;
+```
+
+`connected_` 是 `std::atomic<bool>`，只供应用线程查询；流表不设镜像，全部在 `StreamMux`。
+
+### 4.5 `transport::PeerSessionManager`
+
+**作用**：数据 socket 的唯一入口，按 `peerNodeId` 管理会话与报文路由。
 
 **成员**：
 
@@ -249,10 +388,9 @@ void close(Reason reason);
 | --- | --- | --- |
 | `channel_` | `DataChannel&` | 数据 socket |
 | `localNodeId_` | `uint32` | 本节点标识 |
-| `config_` | `PeerConfig` | 连接参数 |
+| `peerConfig_` / `streamConfig_` | `PeerConfig` / `StreamConfig` | 连接与流参数 |
 | `business_` | `TaskLoop&` | 业务线程 |
-| `connections_` | `map<uint32, shared_ptr<PeerConnection>>` | 连接表 |
-| `pendingStreams_` | `map<uint32, vector<uint32>>` | 等连接就绪的流 |
+| `sessions_` | `map<uint32, shared_ptr<PeerSession>>` | 会话表（唯一按对端的状态） |
 | `streamHandler_` | `StreamHandler` | 对外流事件 |
 | `dataHandler_` | `DataHandler` | 对外数据 |
 
@@ -260,12 +398,13 @@ void close(Reason reason);
 
 ```cpp
 using StreamHandler = std::function<void(std::uint32_t streamId, std::uint32_t peerNodeId,
-                                         StreamEvent event, std::uint8_t reason)>;
+                                         StreamEvent event, Reason reason)>;
 using DataHandler = std::function<void(std::uint32_t streamId, std::uint32_t peerNodeId,
                                        const char* data, std::size_t size)>;
 
-PeerConnectionManager(DataChannel& channel, std::uint32_t localNodeId,
-                      const PeerConfig& config, core::TaskLoop& business);
+PeerSessionManager(DataChannel& channel, std::uint32_t localNodeId,
+                      const PeerConfig& peerConfig, const StreamConfig& streamConfig,
+                      core::TaskLoop& business);
 
 bool start();     // 设置 channel 回调，安排 tick
 void stop();
@@ -275,6 +414,8 @@ std::uint32_t openStream(std::uint32_t peerNodeId, const net::IPAddress& peer);
 bool closeStream(std::uint32_t streamId);
 bool sendData(std::uint32_t streamId, const void* data, std::size_t size);
 bool isConnected(std::uint32_t peerNodeId) const;
+bool isStreamOpen(std::uint32_t streamId) const;
+std::vector<StreamRecord> streams() const;
 
 void setStreamHandler(StreamHandler handler);
 void setDataHandler(DataHandler handler);
@@ -284,14 +425,16 @@ void setDataHandler(DataHandler handler);
 
 | 场景 | 行为 |
 | --- | --- |
-| `openStream` 且连接 `Connected` | 直接 `openStream(streamId)` |
-| `openStream` 且连接 `Connecting` | 入 `pendingStreams_`，连接就绪后补发 |
-| `openStream` 且无连接 | 创建 `PeerConnection` 并发 Hello，入等待队列 |
-| 收到 `Hello` | 复用或创建连接，回 `HelloAck` |
-| 收到连接帧 | 按 `nodeId` 找连接，找不到丢弃 |
-| `tick` | 遍历连接调用 `tick`，清理已关闭连接 |
+| `openStream` | 调用线程生成流号并返回，业务线程建会话、建流、必要时发起握手 |
+| 收到 `Hello` | 建会话、`acceptHandshake`、回 `HelloAck` |
+| 收到 `HelloAck` / `HelloReject` | 转发给会话；拒绝时删除会话 |
+| 收到连接帧 | 按 `nodeId` 找会话，找不到丢弃 |
+| `sendData` / `closeStream` | 线性扫描 `sessions_` 找 `ownsStream` 的会话 |
+| `tick` | 遍历会话调用 `tick`，清理 `Closed` 的会话 |
 
-### 4.4 `transport::DataChannel`
+不维护 `streamToPeer_` / `streamOpen_` / `connectedCache_` / `pendingStreams_` 中的任何一份镜像。
+
+### 4.6 `transport::DataChannel`
 
 **作用**：数据 UDP socket 的封装，绑定端口、注册读事件、线程安全发送。
 
@@ -321,7 +464,7 @@ private:
 };
 ```
 
-### 4.5 `P2PService`
+### 4.7 `P2PService`
 
 **作用**：对外唯一入口，组装发现与连接，管理两个线程。
 
@@ -334,7 +477,7 @@ private:
 | `channel` | `unique_ptr<transport::DataChannel>` |
 | `discovery` | `unique_ptr<node::NodeDiscovery>` |
 | `node` | `unique_ptr<node::NodeManager>` |
-| `connections` | `unique_ptr<transport::PeerConnectionManager>` |
+| `connections` | `unique_ptr<transport::PeerSessionManager>` |
 | `handler` | `PeerHandler` |
 | `streamHandler` | `StreamHandler` |
 | `dataHandler` | `DataHandler` |
@@ -650,7 +793,15 @@ struct PeerConfig {
 | `tick`（重传、心跳） | 业务线程，`tickMs` 定时 |
 | `DataChannel::send` | 内部 `io.post`，落到 I/O 线程 |
 
-`PeerConnection` 的状态只在业务线程访问，不需要锁；连接表由管理器在业务线程维护。
+`PeerConnection` 的状态只在业务线程访问，不需要锁。需要跨线程读取的部分各有单一来源：
+
+| 对象 | 写路径 | 读路径 | 同步手段 |
+| --- | --- | --- | --- |
+| `StreamMux` 的流表 | 业务线程 | 任意线程（`isStreamOpen` / `ownsStream` / `streams` / `hasStreams`） | `StreamMux::mutex_` |
+| `PeerSession::connected_` | 业务线程 | 任意线程 | `std::atomic<bool>` |
+| `PeerSessionManager::sessions_` | 业务线程 | 任意线程（`isConnected` / `isStreamOpen` / `streams`） | `sessionsMutex_` |
+
+两条规则：`StreamMux` 持锁期间不得调用任何外部回调；`PeerSessionManager` 取快照后释放锁再调用会话方法。
 
 ## 11. 与现有代码的映射
 
@@ -662,9 +813,9 @@ struct PeerConfig {
 | `session/DataChannel.*` | 迁到 `transport/` |
 | `transport/DataProtocol.*` | 删除，帧格式并入 `PeerProtocol` |
 | `transport/DataStream.*` | 删除，可靠层并入 `PeerConnection` |
-| `transport/DataStreamManager.*` | 删除，改为 `PeerConnectionManager` |
+| `transport/DataStreamManager.*` | 删除，改为 `PeerSessionManager` |
 | `node/*` | 不变 |
-| `P2PService.cpp` | 组装改为 `DataChannel → PeerConnectionManager` |
+| `P2PService.cpp` | 组装改为 `DataChannel → PeerSessionManager` |
 
 协议版本从 `1` 提到 `2`，新旧不兼容。
 
@@ -676,7 +827,7 @@ struct PeerConfig {
 | 2 | `transport/PeerConnection`：序号、ACK、窗口、重传 | 假 Sender 注入丢包，验证重传与交付 |
 | 3 | 握手：Hello/HelloAck/Reject + 连接状态机 | 两节点建连、超时、重复 Hello |
 | 4 | 流：StreamOpen/Accept/Reject/Close + 分发 | 多流并发、关闭时延 |
-| 5 | `PeerConnectionManager`：排队开流、事件转发 | 未连接时 `openStream` 能自动补发 |
+| 5 | `PeerSessionManager`：排队开流、事件转发 | 未连接时 `openStream` 能自动补发 |
 | 6 | `P2PService` 组装，删除 `src/session/` | 端到端建立、传输、关闭 |
 | 7 | app 与测试改名，文档收尾 | 干净重建全绿 |
 
@@ -702,4 +853,4 @@ struct PeerConfig {
 - 无加密与认证，`nonce` 只做握手关联
 - 不做打洞与中继；将来若做，连接需引入 `connectionId` 与路径验证，握手再扩展
 - 不设独立会话层：业务上的「会话」直接映射为流；需要会话级语义时在 `P2PService` 之上封装
-- 连接与节点表解耦：`PeerConnectionManager` 不校验节点是否在 `PeerTable`，由 `P2PService::openStream` 先用 `findPeer` 取地址
+- 连接与节点表解耦：`PeerSessionManager` 不校验节点是否在 `PeerTable`，由 `P2PService::openStream` 先用 `findPeer` 取地址

@@ -187,26 +187,45 @@ classDiagram
         -tick() void
     }
 
-    class PeerConnectionManager {
+    class PeerSessionManager {
         -DataChannel& channel_
         -uint32 localNodeId_
-        -PeerConfig config_
+        -PeerConfig peerConfig_
+        -StreamConfig streamConfig_
         -TaskLoop& business_
-        -unordered_map~uint32, shared_ptr~PeerConnection~~ connections_
-        -unordered_map~uint32, vector~uint32~~ pendingStreams_
+        -unordered_map~uint32, shared_ptr~PeerSession~~ sessions_
         -StreamHandler streamHandler_
         -DataHandler dataHandler_
         +start() bool
         +stop() void
         +connect(uint32, IPAddress) bool
-        +openStream(uint32, uint32) bool
-        +closeStream(uint32, uint32) bool
-        +sendData(uint32, uint32, void*, size_t) bool
+        +openStream(uint32, IPAddress) uint32
+        +closeStream(uint32) bool
+        +sendData(uint32, void*, size_t) bool
         +isConnected(uint32) bool
+        +isStreamOpen(uint32) bool
+        +streams() vector~StreamRecord~
         +setStreamHandler(StreamHandler) void
         +setDataHandler(DataHandler) void
         -onDatagram(IPAddress, char*, size_t) void
         -tick() void
+        -sessionForStream(uint32) shared_ptr~PeerSession~
+    }
+
+    class PeerSession {
+        -PeerConnection connection_
+        -StreamMux streams_
+        -atomic~bool~ connected_
+        +connect() bool
+        +acceptHandshake() void
+        +onFrame(PeerFrame) void
+        +tick(time_point) void
+        +openStream(uint32) bool
+        +sendData(uint32, void*, size_t) bool
+        +closeStream(uint32) bool
+        +ownsStream(uint32) bool
+        +isStreamOpen(uint32) bool
+        +isConnected() bool
     }
 
     class PeerConnection {
@@ -215,6 +234,7 @@ classDiagram
         -IPAddress peer_
         -PeerConfig config_
         -Sender sender_
+        -HasStreams hasStreams_
         -ConnectionState state_
         -uint32 helloNonce_
         -int helloRetries_
@@ -224,17 +244,46 @@ classDiagram
         -deque~PendingFrame~ sendQueue_
         -uint32 receiveNext_
         -map~uint32, PeerFrame~ receiveBuffer_
-        -unordered_map~uint32, StreamState~ streams_
         -int pingMisses_
         +open() bool
         +close(uint8) void
+        +send(PeerFrame) bool
         +onFrame(PeerFrame) void
         +onHelloAck(PeerFrame) void
         +tick(time_point) void
-        +openStream(uint32) bool
-        +closeStream(uint32) bool
-        +sendData(uint32, void*, size_t) bool
+        +setFrameHandler(FrameHandler) void
+        +setCloseHandler(CloseHandler) void
         +isConnected() bool
+    }
+
+    class StreamMux {
+        -uint32 peerNodeId_
+        -StreamConfig config_
+        -FrameSender sender_
+        -bool connected_
+        -mutex mutex_
+        -unordered_map~uint32, Stream~ streams_
+        -deque~uint32~ pending_
+        +onFrame(PeerFrame) void
+        +onConnectionUp() void
+        +onConnectionClosed(uint8) void
+        +openStream(uint32) bool
+        +sendData(uint32, void*, size_t) bool
+        +closeStream(uint32) bool
+        +hasStreams() bool
+        +isStreamOpen(uint32) bool
+        +ownsStream(uint32) bool
+        +streams() vector~StreamRecord~
+    }
+
+    class Stream {
+        -uint32 streamId_
+        -uint32 peerNodeId_
+        -bool locallyInitiated_
+        -StreamState state_
+        +markOpen() bool
+        +deliverData(char*, size_t) void
+        +close(uint8, uint8) void
     }
 
     class PeerProtocol {
@@ -256,10 +305,13 @@ classDiagram
     NodeDiscovery --> UDPSocket
     NodeDiscovery ..> PeerInfo
     DataChannel --> UDPSocket
-    PeerConnectionManager *-- PeerConnection
-    PeerConnectionManager --> DataChannel
-    PeerConnectionManager --> TaskLoop
-    PeerConnectionManager ..> PeerProtocol
+    PeerSessionManager *-- PeerSession
+    PeerSessionManager --> DataChannel
+    PeerSessionManager --> TaskLoop
+    PeerSession *-- PeerConnection
+    PeerSession *-- StreamMux
+    StreamMux *-- Stream
+    PeerSession ..> PeerProtocol
     PeerConnection ..> PeerProtocol
 ```
 
@@ -669,18 +721,30 @@ private:
 
 `NodeManager` 不再创建或持有任何 socket：收到公告由 `NodeDiscovery` 回调推入，发送公告通过 `IoLoop::post` 调用 `channel_.announce()`。
 
-### 4.4 transport 模块 [设计]
+### 4.4 transport 模块 [已实现]
 
-负责连接与流：握手、连接级可靠传输、多路复用、心跳。不依赖 session。协议与类细节见 [peer-protocol.md](peer-protocol.md)。
+负责连接与流：握手、连接级可靠传输、多路复用、心跳。不依赖 session。协议与类细节见 [peer-protocol.md](peer-protocol.md)，分层依据见 [transport-layer-split.md](transport-layer-split.md)。
 
-| 类 | 职责 | 关键接口 |
-| --- | --- | --- |
-| `PeerProtocol` | 握手报文与连接帧编解码 | `encodeHello` / `decodeHello` / `encodeFrame` / `decodeFrame` |
-| `PeerConnection` | 单连接：握手、序号、窗口、重传、流表、心跳 | `open` / `onFrame` / `tick` / `openStream` / `sendData` |
-| `PeerConnectionManager` | 按 `peerNodeId` 管理连接与报文分发 | `connect` / `openStream` / `sendData` / `onDatagram` |
-| `DataChannel` | 数据 UDP socket | `open` / `setReceiver` / `send` |
+内部按两层拆开，`transport/` 根只做组装：
 
-`P2PService` 通过 `PeerConnectionManager` 开流与发数据，连接层通过 `StreamHandler` / `DataHandler` 把事件与数据推回业务层。
+| 模块 | 类 | 职责 | 关键接口 |
+| --- | --- | --- | --- |
+| `transport/connection/` | `PeerProtocol` | 握手报文与连接帧编解码 | `encodeHello` / `decodeHello` / `encodeFrame` / `decodeFrame` |
+| `transport/connection/` | `PeerConnection` | 单连接：握手、序号、窗口、重传、心跳、有序交付 | `open` / `send` / `onFrame` / `tick` |
+| `transport/stream/` | `Stream` | 单条流的状态与回调 | `markOpen` / `deliverData` / `close` |
+| `transport/stream/` | `StreamMux` | 唯一流表、流信令、数据分发、并发上限 | `openStream` / `sendData` / `onFrame` / `onConnectionUp` |
+| `transport/`（根） | `PeerSession` | 每对端组装：连接 + 流，状态同步 | `connect` / `openStream` / `sendData` / `tick` |
+| `transport/`（根） | `PeerSessionManager` | 报文路由、会话表、对外 API | `connect` / `openStream` / `isStreamOpen` / `streams` |
+| `transport/`（根） | `DataChannel` | 数据 UDP socket | `open` / `setReceiver` / `send` |
+
+边界约定：
+
+- **可靠性只在连接层**：序号、ACK、窗口、重传、有序交付都由 `PeerConnection` 负责，流层不感知序号。
+- **连接层保证有序交付**：对端先发 `StreamOpen` 再发 `Data`，本地一定先交付 `StreamOpen`，`StreamMux` 可以依赖这一点。
+- **流层不持有连接**：发帧通过注入的 `FrameSender`，收帧通过 `onFrame`，关闭通过 `onConnectionClosed` 通知。
+- **不保存状态镜像**：流表只在 `StreamMux`，连接状态只在 `PeerSession`（对外是 `atomic<bool>`），manager 不再维护 `streamToPeer_` / `streamOpen_` 之类的副本。
+
+`P2PService` 通过 `PeerSessionManager` 开流与发数据，组装层通过 `StreamHandler` / `DataHandler` 把事件与数据推回业务层。
 
 ### 4.5 应用层组装
 
@@ -695,7 +759,7 @@ class P2PService {
         std::unique_ptr<DataChannel> channel;
         std::unique_ptr<NodeDiscovery> discovery;
         std::unique_ptr<NodeManager> node;
-        std::unique_ptr<PeerConnectionManager> connections;
+        std::unique_ptr<PeerSessionManager> connections;
     };
 };
 ```
@@ -729,7 +793,7 @@ endforeach()
 `apps/demo/CMakeLists.txt` 链接 `NetProxy::netproxy` 与 `Threads::Threads`，并把 VS 多配置的输出目录统一到 `bin`：
 
 ```cmake
-set_target_properties(netproxy_cli PROPERTIES
+set_target_properties(netproxy_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/bin
     RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/bin
@@ -739,8 +803,8 @@ set_target_properties(netproxy_cli PROPERTIES
 产物路径统一为：
 
 ```
-build/<preset>/bin/netproxy_cli          # Linux
-build/windows-msvc/bin/netproxy_cli.exe  # Windows
+build/<preset>/bin/netproxy_demo          # Linux
+build/windows-msvc/bin/netproxy_demo.exe  # Windows
 ```
 
 平台差异：
@@ -792,7 +856,7 @@ openStream(peerNodeId)
   └─ 连接 Connected → 发 StreamOpen ────────────> dataSocket.sendTo(StreamOpen)
 
 数据 socket 可读  <──────────────────────────────
-  PeerConnectionManager.onDatagram
+  PeerSessionManager.onDatagram
   ├─ Hello → 复用或创建连接，回 HelloAck
   ├─ HelloAck → 连接 Connected，补发排队流
   └─ 连接帧 → PeerConnection.onFrame
@@ -825,7 +889,7 @@ sendData(streamId, data)
   └─ channel.send(Data) ──────────────────────> dataSocket.sendTo(Data)
 
 数据 socket 可读  <──────────────────────────────
-  PeerConnectionManager.onDatagram
+  PeerSessionManager.onDatagram
   └─ PeerConnection.onFrame
        ├─ 按连接序号去重与排序
        └─ dataHandler(streamId, peerNodeId, payload)
@@ -844,7 +908,7 @@ sendData(streamId, data)
 2. DataChannel 构造并 open()，绑定数据端口并回填真实端口
 3. NodeDiscovery 构造并 open(dataPort)，绑定组播、注册读事件
 4. NodeManager 构造（注入 NodeDiscovery），start() 设置 receiver 与定时
-5. PeerConnectionManager 构造（注入 DataChannel），start() 接管数据 socket
+5. PeerSessionManager 构造（注入 DataChannel），start() 接管数据 socket
 6. io.start()
 7. business.start()
 ```

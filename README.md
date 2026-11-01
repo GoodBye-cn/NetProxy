@@ -18,7 +18,7 @@ C++17 网络代理项目，使用 CMake 构建。Linux 使用 Clang，Windows �
 | `src/net/` | 内部套接字与 poll 封装 |
 | `src/core/` | I/O 线程与业务线程循环 |
 | `src/node/` | 节点管理器、组播发现通道与节点表 |
-| `src/transport/` | 连接、流与可靠传输 |
+| `src/transport/` | 连接层、流层与会话组装 |
 | `src/protocol/` | 连接协议常量与类型 |
 | `apps/` | 可执行程序汇总，每个子目录产出一个 Demo |
 | `apps/demo/` | 交互式命令行测试程序 |
@@ -160,14 +160,14 @@ service.stop();
 
 ### 测试程序
 
-`netproxy_cli` 启动后进入交互模式，可以手动开流与发送数据：
+`netproxy_demo` 启动后进入交互模式，可以手动开流与发送数据：
 
 ```bash
 # Linux
-./build/linux-clang/bin/netproxy_cli --node-id 1 --port 7001
+./build/linux-clang/bin/netproxy_demo --node-id 1 --port 7001
 
 # Windows
-.\build\windows-msvc\bin\netproxy_cli.exe --node-id 2 --port 7002
+.\build\windows-msvc\bin\netproxy_demo.exe --node-id 2 --port 7002
 ```
 
 两个平台的可执行文件都输出到构建目录的 `bin/` 下。
@@ -226,17 +226,21 @@ discovery.close();
 
 ## 连接与流
 
-`src/transport/` 负责连接与流：每个节点对一条可靠连接，上层业务直接在连接上开流，不再有独立的会话层。
+`src/transport/` 负责连接与流，内部分两层：`connection/` 管握手、序号、窗口与重传，`stream/` 管流表与流信令。每个节点对由 `PeerSession` 把两者组合起来，上层业务直接在连接上开流。
 
 ```cpp
 #include "transport/DataChannel.h"
-#include "transport/PeerConnectionManager.h"
+#include "transport/PeerSessionManager.h"
+#include "transport/connection/PeerConfig.h"
+#include "transport/stream/StreamConfig.h"
 
 netproxy::transport::DataChannel channel(io);
 channel.open("0.0.0.0", 7001);
 
 netproxy::transport::PeerConfig peerConfig;
-netproxy::transport::PeerConnectionManager connections(channel, 0x12345678, peerConfig, business);
+netproxy::transport::StreamConfig streamConfig;
+streamConfig.maxStreams = 16;
+netproxy::transport::PeerSessionManager connections(channel, 0x12345678, peerConfig, streamConfig, business);
 connections.start();
 
 netproxy::PeerInfo peer;
