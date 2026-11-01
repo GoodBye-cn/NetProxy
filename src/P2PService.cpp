@@ -139,21 +139,21 @@ bool P2PService::start(const P2PServiceConfig& config) {
 
     // 4. 连接与流
     impl_->connections = std::make_unique<transport::PeerSessionManager>(*impl_->channel, nodeId, peerConfig,
-                                                                            streamConfig, impl_->business);
+                                                                         streamConfig, impl_->business);
 
     Impl* impl = impl_.get();
-    impl_->connections->setStreamHandler(
-        [impl](std::uint32_t streamId, std::uint32_t peerNodeId, protocol::StreamEvent event, protocol::CloseReason reason) {
-            StreamHandler target;
-            {
-                std::lock_guard<std::mutex> lock(impl->handlerMutex);
-                target = impl->streamHandler;
-            }
+    impl_->connections->setStreamHandler([impl](std::uint32_t streamId, std::uint32_t peerNodeId,
+                                                protocol::StreamEvent event, protocol::CloseReason reason) {
+        StreamHandler target;
+        {
+            std::lock_guard<std::mutex> lock(impl->handlerMutex);
+            target = impl->streamHandler;
+        }
 
-            if (target) {
-                target(streamId, peerNodeId, toPublicEvent(event), static_cast<std::uint8_t>(reason));
-            }
-        });
+        if (target) {
+            target(streamId, peerNodeId, toPublicEvent(event), static_cast<std::uint8_t>(reason));
+        }
+    });
 
     impl_->connections->setDataHandler(
         [impl](std::uint32_t streamId, std::uint32_t peerNodeId, const char* data, std::size_t size) {

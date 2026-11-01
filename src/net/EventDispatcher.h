@@ -98,9 +98,9 @@ public:
     void wakeup();
 
 private:
-    mutable std::mutex mutex_;
-    std::unordered_map<SocketHandle, Handler> handlers_;
-    Poller poller_;
+    mutable std::mutex mutex_;                           // 保护 handlers_
+    std::unordered_map<SocketHandle, Handler> handlers_; // socket 句柄到读回调
+    Poller poller_;                                      // 底层 poll 封装
 };
 
 } // namespace netproxy::net

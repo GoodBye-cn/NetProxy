@@ -11,14 +11,14 @@
 namespace {
 
 using netproxy::net::IPAddress;
+using netproxy::protocol::CloseReason;
 using netproxy::protocol::FrameType;
 using netproxy::protocol::HelloType;
-using netproxy::protocol::CloseReason;
+using netproxy::protocol::PeerFrame;
 using netproxy::transport::ConnectionState;
 using netproxy::transport::HelloMessage;
 using netproxy::transport::PeerConfig;
 using netproxy::transport::PeerConnection;
-using netproxy::protocol::PeerFrame;
 using netproxy::transport::PeerProtocol;
 
 using Clock = std::chrono::steady_clock;

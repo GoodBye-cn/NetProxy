@@ -24,10 +24,10 @@ class AnnounceMessage final {
 public:
     static constexpr std::size_t SIZE = 16;
 
-    AnnounceType type = AnnounceType::Announce;
-    net::IPAddress address;   // 发送方声明的可连接地址
-    std::uint32_t nodeId = 0; // 发送方节点标识
-    std::uint16_t port = 0;   // 发送方数据端口
+    AnnounceType type = AnnounceType::Announce; // 公告（Announce）或离开（Bye）
+    net::IPAddress address;                     // 发送方声明的可连接地址
+    std::uint32_t nodeId = 0;                   // 发送方节点标识
+    std::uint16_t port = 0;                     // 发送方数据端口
 
     /**
      * 编码为网络字节序的报文。

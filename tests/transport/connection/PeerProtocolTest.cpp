@@ -7,8 +7,8 @@ namespace {
 
 using netproxy::protocol::FrameType;
 using netproxy::protocol::HelloType;
-using netproxy::transport::HelloMessage;
 using netproxy::protocol::PeerFrame;
+using netproxy::transport::HelloMessage;
 using netproxy::transport::PeerProtocol;
 
 void helloRoundTrip() {

@@ -29,8 +29,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     jclass clazz = env->FindClass(netproxy::jni::SERVICE_CLASS_NAME);
     if (clazz == nullptr) {
         env->ExceptionClear();
-        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "FindClass(%s) failed",
-                            netproxy::jni::SERVICE_CLASS_NAME);
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "FindClass(%s) failed", netproxy::jni::SERVICE_CLASS_NAME);
         return JNI_ERR;
     }
 

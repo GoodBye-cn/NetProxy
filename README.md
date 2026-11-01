@@ -8,6 +8,7 @@ C++17 网络代理项目，使用 CMake 构建。Linux 使用 Clang，Windows �
 - [docs/discovery-protocol.md](docs/discovery-protocol.md)：组播发现协议
 - [docs/peer-protocol.md](docs/peer-protocol.md)：连接与流协议
 - [docs/file-transfer.md](docs/file-transfer.md)：单流多文件传输方案
+- [docs/coding-style.md](docs/coding-style.md)：代码风格与注释规范
 
 ## 目录结构
 

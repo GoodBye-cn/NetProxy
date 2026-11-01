@@ -6,8 +6,8 @@
 
 namespace netproxy::node {
 
-PeerDirectory::PeerDirectory(NodeDiscovery& discovery, std::uint32_t nodeId, const DiscoveryConfig& config, core::IoLoop& io,
-                         core::TaskLoop& business)
+PeerDirectory::PeerDirectory(NodeDiscovery& discovery, std::uint32_t nodeId, const DiscoveryConfig& config,
+                             core::IoLoop& io, core::TaskLoop& business)
     : config_(config), discovery_(discovery), nodeId_(nodeId), io_(io), business_(business) {}
 
 PeerDirectory::~PeerDirectory() {

@@ -30,9 +30,8 @@ bool isFrameType(std::uint8_t type) {
 
 } // namespace
 
-PeerSessionManager::PeerSessionManager(DataChannel& channel, std::uint32_t localNodeId,
-                                             const PeerConfig& peerConfig, const StreamConfig& streamConfig,
-                                             core::TaskLoop& business)
+PeerSessionManager::PeerSessionManager(DataChannel& channel, std::uint32_t localNodeId, const PeerConfig& peerConfig,
+                                       const StreamConfig& streamConfig, core::TaskLoop& business)
     : channel_(channel), localNodeId_(localNodeId), peerConfig_(peerConfig), streamConfig_(streamConfig),
       business_(business), sender_(channel.sender()) {}
 
@@ -286,8 +285,7 @@ void PeerSessionManager::scheduleTick() {
     business_.postDelayed(peerConfig_.tickMs, [this] { tick(); });
 }
 
-std::shared_ptr<PeerSession> PeerSessionManager::ensureSession(std::uint32_t peerNodeId,
-                                                                 const net::IPAddress& peer) {
+std::shared_ptr<PeerSession> PeerSessionManager::ensureSession(std::uint32_t peerNodeId, const net::IPAddress& peer) {
     {
         std::lock_guard<std::mutex> lock(sessionsMutex_);
         const auto entry = sessions_.find(peerNodeId);
@@ -296,19 +294,15 @@ std::shared_ptr<PeerSession> PeerSessionManager::ensureSession(std::uint32_t pee
         }
     }
 
-    auto session =
-        std::make_shared<PeerSession>(localNodeId_, peerNodeId, peer, peerConfig_, streamConfig_, sender_);
+    auto session = std::make_shared<PeerSession>(localNodeId_, peerNodeId, peer, peerConfig_, streamConfig_, sender_);
 
     // 事件转发不带会话指针：流层保证回调在锁外触发。
-    session->setStreamHandler([this, peerNodeId](std::uint32_t streamId, std::uint32_t, protocol::StreamEvent event,
-                                                 protocol::CloseReason reason) {
-        emitStreamEvent(streamId, peerNodeId, event, reason);
-    });
+    session->setStreamHandler(
+        [this, peerNodeId](std::uint32_t streamId, std::uint32_t, protocol::StreamEvent event,
+                           protocol::CloseReason reason) { emitStreamEvent(streamId, peerNodeId, event, reason); });
 
     session->setDataHandler([this, peerNodeId](std::uint32_t streamId, std::uint32_t, const char* data,
-                                               std::size_t size) {
-        emitData(streamId, peerNodeId, data, size);
-    });
+                                               std::size_t size) { emitData(streamId, peerNodeId, data, size); });
 
     std::lock_guard<std::mutex> lock(sessionsMutex_);
     const auto existing = sessions_.find(peerNodeId);
@@ -342,8 +336,8 @@ std::vector<std::shared_ptr<PeerSession>> PeerSessionManager::snapshotSessions()
     return result;
 }
 
-void PeerSessionManager::emitStreamEvent(std::uint32_t streamId, std::uint32_t peerNodeId,
-                                            protocol::StreamEvent event, protocol::CloseReason reason) {
+void PeerSessionManager::emitStreamEvent(std::uint32_t streamId, std::uint32_t peerNodeId, protocol::StreamEvent event,
+                                         protocol::CloseReason reason) {
     StreamMux::StreamHandler handler;
     {
         std::lock_guard<std::mutex> lock(sessionsMutex_);
@@ -356,7 +350,7 @@ void PeerSessionManager::emitStreamEvent(std::uint32_t streamId, std::uint32_t p
 }
 
 void PeerSessionManager::emitData(std::uint32_t streamId, std::uint32_t peerNodeId, const char* data,
-                                     std::size_t size) {
+                                  std::size_t size) {
     StreamMux::DataHandler handler;
     {
         std::lock_guard<std::mutex> lock(sessionsMutex_);

@@ -54,8 +54,8 @@ public:
     void drain();
 
 private:
-    SocketHandle readHandle_ = INVALID_SOCKET_HANDLE;
-    SocketHandle writeHandle_ = INVALID_SOCKET_HANDLE;
+    SocketHandle readHandle_ = INVALID_SOCKET_HANDLE;  // 读端句柄
+    SocketHandle writeHandle_ = INVALID_SOCKET_HANDLE; // 写端句柄
 };
 
 } // namespace netproxy::net

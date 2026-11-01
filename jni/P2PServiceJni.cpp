@@ -1,7 +1,7 @@
 #include "P2PServiceJni.h"
 
-#include <arpa/inet.h>
 #include <android/log.h>
+#include <arpa/inet.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -274,8 +274,8 @@ jboolean nativeSendData(JNIEnv* env, jclass, jlong handle, jint streamId, jbyteA
         if (bytes == nullptr) {
             return JNI_FALSE;
         }
-        const bool sent = entry.service->sendData(static_cast<std::uint32_t>(streamId), bytes,
-                                                  static_cast<std::size_t>(length));
+        const bool sent =
+            entry.service->sendData(static_cast<std::uint32_t>(streamId), bytes, static_cast<std::size_t>(length));
         env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
         return sent ? JNI_TRUE : JNI_FALSE;
     });
@@ -319,10 +319,8 @@ void nativeSetListener(JNIEnv* env, jclass, jlong handle, jobject listener) {
             [bridge](std::uint32_t streamId, std::uint32_t peerNodeId, StreamEvent event, std::uint8_t reason) {
                 bridge->onStreamEvent(streamId, peerNodeId, event, reason);
             });
-        entry.service->setDataHandler(
-            [bridge](std::uint32_t streamId, std::uint32_t peerNodeId, const char* data, std::size_t size) {
-                bridge->onData(streamId, peerNodeId, data, size);
-            });
+        entry.service->setDataHandler([bridge](std::uint32_t streamId, std::uint32_t peerNodeId, const char* data,
+                                               std::size_t size) { bridge->onData(streamId, peerNodeId, data, size); });
 
         JniRegistry::instance().setListener(handle, std::move(bridge));
     });
@@ -364,8 +362,7 @@ const JNINativeMethod NATIVE_METHODS[] = {
     {const_cast<char*>("nativeOpenStream"), const_cast<char*>("(JI)I"), reinterpret_cast<void*>(&nativeOpenStream)},
     {const_cast<char*>("nativeCloseStream"), const_cast<char*>("(JI)Z"), reinterpret_cast<void*>(&nativeCloseStream)},
     {const_cast<char*>("nativeSendData"), const_cast<char*>("(JI[B)Z"), reinterpret_cast<void*>(&nativeSendData)},
-    {const_cast<char*>("nativeIsStreamOpen"), const_cast<char*>("(JI)Z"),
-     reinterpret_cast<void*>(&nativeIsStreamOpen)},
+    {const_cast<char*>("nativeIsStreamOpen"), const_cast<char*>("(JI)Z"), reinterpret_cast<void*>(&nativeIsStreamOpen)},
     {const_cast<char*>("nativeSetListener"), const_cast<char*>(SET_LISTENER_SIGNATURE),
      reinterpret_cast<void*>(&nativeSetListener)},
     {const_cast<char*>("nativeSetLogcatEnabled"), const_cast<char*>("(JZ)V"),

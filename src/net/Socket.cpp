@@ -239,8 +239,7 @@ std::string Socket::lastErrorMessage() const {
         WideCharToMultiByte(CP_UTF8, 0, buffer, static_cast<int>(length), nullptr, 0, nullptr, nullptr));
     if (utf8Length > 0) {
         message.resize(static_cast<std::size_t>(utf8Length));
-        WideCharToMultiByte(CP_UTF8, 0, buffer, static_cast<int>(length), message.data(), utf8Length, nullptr,
-                            nullptr);
+        WideCharToMultiByte(CP_UTF8, 0, buffer, static_cast<int>(length), message.data(), utf8Length, nullptr, nullptr);
     }
     LocalFree(buffer);
 

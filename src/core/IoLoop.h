@@ -67,11 +67,11 @@ private:
     void run();
     void runPendingTasks();
 
-    net::EventDispatcher dispatcher_;
-    std::mutex mutex_;
-    std::deque<Task> tasks_;
+    net::EventDispatcher dispatcher_; // 事件分发器，只在 I/O 线程使用
+    std::mutex mutex_;                // 保护 tasks_
+    std::deque<Task> tasks_;          // 待执行任务队列
     std::atomic<bool> running_{false};
-    std::thread thread_;
+    std::thread thread_; // I/O 线程
 };
 
 } // namespace netproxy::core

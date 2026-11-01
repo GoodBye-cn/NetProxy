@@ -103,16 +103,16 @@ private:
     // 构造并组播发送指定类型的报文。
     bool sendMessage(AnnounceType type);
 
-    core::IoLoop& io_;
-    net::UDPSocket socket_;
-    net::IPAddress multicastAddress_;
-    std::string multicastGroup_;
-    std::uint16_t multicastPort_;
-    std::uint32_t nodeId_ = 0;
-    std::uint16_t announcePort_ = 0;
-    Receiver receiver_;
-    bool opened_ = false;
-    bool registered_ = false;
+    core::IoLoop& io_;                // I/O 线程循环，收发都在此线程
+    net::UDPSocket socket_;           // 组播 socket
+    net::IPAddress multicastAddress_; // 解析后的组播地址
+    std::string multicastGroup_;      // 组播组字面量
+    std::uint16_t multicastPort_;     // 组播端口
+    std::uint32_t nodeId_ = 0;        // 本节点标识，写入公告并用于过滤自身
+    std::uint16_t announcePort_ = 0;  // 公告中的数据端口
+    Receiver receiver_;               // 收到公告后的回调
+    bool opened_ = false;             // socket 是否已打开
+    bool registered_ = false;         // 读事件是否已注册
 };
 
 } // namespace netproxy::node

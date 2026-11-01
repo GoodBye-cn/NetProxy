@@ -148,10 +148,10 @@ private:
      */
     std::ptrdiff_t indexOf(SocketHandle handle) const;
 
-    mutable std::mutex mutex_;
-    std::vector<PollDescriptor> entries_;
-    WakeupChannel wakeup_;
-    bool wakeupReady_ = false;                  // 唤醒通道是否创建成功，失败时 poll 返回 -1
+    mutable std::mutex mutex_;                 // 保护 entries_
+    std::vector<PollDescriptor> entries_;      // 注册的 poll 描述符
+    WakeupChannel wakeup_;                     // 跨线程唤醒通道
+    bool wakeupReady_ = false;                 // 唤醒通道是否创建成功，失败时 poll 返回 -1
     std::atomic<bool> wakeupRequested_{false}; // true 表示用户调用 wakeup()，poll 应立即返回
 };
 

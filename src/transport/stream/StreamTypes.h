@@ -22,10 +22,10 @@ enum class StreamState : std::uint8_t {
 
 // 流的对外快照。
 struct StreamRecord {
-    std::uint32_t streamId = 0;
-    std::uint32_t peerNodeId = 0;
-    bool open = false;
-    bool locallyInitiated = false;
+    std::uint32_t streamId = 0;    // 流标识
+    std::uint32_t peerNodeId = 0;  // 所属对端
+    bool open = false;             // 是否已进入 Open
+    bool locallyInitiated = false; // 是否本端发起
 };
 
 } // namespace netproxy::transport

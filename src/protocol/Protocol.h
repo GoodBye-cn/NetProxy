@@ -12,11 +12,7 @@ constexpr std::size_t HELLO_HEADER_SIZE = 16;
 constexpr std::size_t FRAME_HEADER_SIZE = 28;
 
 // 握手报文类型。
-enum class HelloType : std::uint8_t {
-    Hello = 1,
-    HelloAck = 2,
-    HelloReject = 3
-};
+enum class HelloType : std::uint8_t { Hello = 1, HelloAck = 2, HelloReject = 3 };
 
 // 握手拒绝原因。
 enum class HelloRejectReason : std::uint8_t {
@@ -38,18 +34,9 @@ enum class FrameType : std::uint8_t {
 };
 
 // 流事件。
-enum class StreamEvent : std::uint8_t {
-    Opened = 1,
-    Rejected = 2,
-    Closed = 3
-};
+enum class StreamEvent : std::uint8_t { Opened = 1, Rejected = 2, Closed = 3 };
 
 // 流与连接关闭原因。
-enum class CloseReason : std::uint8_t {
-    Local = 1,
-    Remote = 2,
-    Timeout = 3,
-    Error = 4
-};
+enum class CloseReason : std::uint8_t { Local = 1, Remote = 2, Timeout = 3, Error = 4 };
 
 } // namespace netproxy::protocol

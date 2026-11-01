@@ -6,8 +6,7 @@ namespace netproxy::transport {
 
 PeerSession::PeerSession(std::uint32_t localNodeId, std::uint32_t peerNodeId, const net::IPAddress& peer,
                          const PeerConfig& peerConfig, const StreamConfig& streamConfig, PacketSender sender)
-    : connection_(peerNodeId, localNodeId, peer, peerConfig, sender,
-                  [this] { return streams_.hasStreams(); }),
+    : connection_(peerNodeId, localNodeId, peer, peerConfig, sender, [this] { return streams_.hasStreams(); }),
       streams_(peerNodeId, streamConfig,
                [this](protocol::PeerFrame frame) { return connection_.send(std::move(frame)); }) {
     connection_.setFrameHandler([this](const protocol::PeerFrame& frame) { streams_.onFrame(frame); });

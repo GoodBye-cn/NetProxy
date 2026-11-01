@@ -1,7 +1,7 @@
 #include "NodeDiscovery.h"
 
-#include "Log.h"
 #include "DiscoveryProtocol.h"
+#include "Log.h"
 
 #include <utility>
 

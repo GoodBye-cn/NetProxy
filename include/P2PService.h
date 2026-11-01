@@ -20,9 +20,9 @@ enum class StreamEvent {
 
 // 流快照。
 struct StreamInfo {
-    std::uint32_t streamId = 0;
-    std::uint32_t peerNodeId = 0;
-    bool open = false; // 是否已打开
+    std::uint32_t streamId = 0;   // 流标识
+    std::uint32_t peerNodeId = 0; // 所属对端节点标识
+    bool open = false;            // 是否已打开
 };
 
 // P2P 服务配置。
@@ -253,7 +253,7 @@ public:
 
 private:
     struct Impl;
-    std::unique_ptr<Impl> impl_;
+    std::unique_ptr<Impl> impl_; // 隐藏实现，构造时创建，stop 后仍保留
 };
 
 } // namespace netproxy

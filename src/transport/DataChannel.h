@@ -6,9 +6,9 @@
 #include <string>
 
 #include "core/IoLoop.h"
-#include "transport/connection/TransportTypes.h"
 #include "net/Socket.h"
 #include "net/UDPSocket.h"
+#include "transport/connection/TransportTypes.h"
 
 namespace netproxy::transport {
 
@@ -93,10 +93,10 @@ private:
     void handleReadable();
 
     core::IoLoop& io_;
-    net::UDPSocket socket_;
-    Receiver receiver_;
-    bool opened_ = false;
-    bool registered_ = false;
+    net::UDPSocket socket_;   // 数据 UDP socket
+    Receiver receiver_;       // 收包回调，运行在 I/O 线程
+    bool opened_ = false;     // socket 是否已打开
+    bool registered_ = false; // 读事件是否已注册
 };
 
 } // namespace netproxy::transport

@@ -134,7 +134,7 @@ public:
 
 private:
     sockaddr_storage storage_{};
-    SocketLength length_ = 0;
+    SocketLength length_ = 0; // 地址有效长度
 };
 
 /**
@@ -295,10 +295,10 @@ private:
 
     friend class IPAddress;
 
-    int socketType_ = 0;
-    int protocol_ = 0;
-    SocketHandle handle_ = INVALID_SOCKET_HANDLE;
-    int family_ = AF_UNSPEC;
+    int socketType_ = 0;                          // SOCK_STREAM / SOCK_DGRAM
+    int protocol_ = 0;                            // 协议号，通常为 0
+    SocketHandle handle_ = INVALID_SOCKET_HANDLE; // 原生 socket 句柄
+    int family_ = AF_UNSPEC;                      // AF_INET / AF_INET6
 };
 
 } // namespace netproxy::net

@@ -68,8 +68,8 @@ public:
 
 private:
     struct DelayedTask {
-        std::chrono::steady_clock::time_point deadline;
-        Task task;
+        std::chrono::steady_clock::time_point deadline; // 计划执行时间
+        Task task;                                      // 延迟任务体
     };
 
     // 取最近一个定时任务的到期时间，调用方需持有锁且队列非空。
@@ -77,12 +77,12 @@ private:
 
     void run();
 
-    std::mutex mutex_;
-    std::condition_variable condition_;
-    std::deque<Task> tasks_;
-    std::vector<DelayedTask> delayed_;
-    std::atomic<bool> running_{false};
-    std::thread thread_;
+    std::mutex mutex_;                  // 保护任务队列与延迟队列
+    std::condition_variable condition_; // 唤醒业务线程
+    std::deque<Task> tasks_;            // 立即执行的任务队列
+    std::vector<DelayedTask> delayed_;  // 按时间排序的延迟任务
+    std::atomic<bool> running_{false};  // 是否已 start 且未 stop
+    std::thread thread_;                // 业务线程
 };
 
 } // namespace netproxy::core

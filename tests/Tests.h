@@ -16,9 +16,7 @@ void runNodeTests();
 
 void runCoreTests();
 
-
 void runP2PServiceTests();
-
 
 void runPeerProtocolTests();
 

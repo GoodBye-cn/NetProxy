@@ -6,15 +6,15 @@
 
 #include "TestSupport.h"
 #include "core/IoLoop.h"
-#include "node/NodeDiscovery.h"
 #include "node/DiscoveryProtocol.h"
+#include "node/NodeDiscovery.h"
 
 namespace {
 
 using netproxy::core::IoLoop;
-using netproxy::node::NodeDiscovery;
 using netproxy::node::AnnounceMessage;
 using netproxy::node::AnnounceType;
+using netproxy::node::NodeDiscovery;
 using netproxy::node::PeerInfo;
 
 void messageRoundTrip() {

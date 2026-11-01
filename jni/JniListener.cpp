@@ -83,7 +83,8 @@ void JniListener::onPeer(const PeerInfo& peer) {
     clearPendingException(jni, "onPeer");
 }
 
-void JniListener::onStreamEvent(std::uint32_t streamId, std::uint32_t peerNodeId, StreamEvent event, std::uint8_t reason) {
+void JniListener::onStreamEvent(std::uint32_t streamId, std::uint32_t peerNodeId, StreamEvent event,
+                                std::uint8_t reason) {
     ScopedEnv env;
     if (!env) {
         return;

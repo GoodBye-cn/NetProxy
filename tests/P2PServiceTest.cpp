@@ -172,12 +172,12 @@ void servicePeerInitiatedStream() {
     netproxy::P2PService serviceB;
 
     std::atomic<std::uint32_t> openedOnB{0};
-    serviceB.setStreamHandler([&openedOnB](std::uint32_t streamId, std::uint32_t, netproxy::StreamEvent event,
-                                           std::uint8_t) {
-        if (event == netproxy::StreamEvent::Opened) {
-            openedOnB.store(streamId);
-        }
-    });
+    serviceB.setStreamHandler(
+        [&openedOnB](std::uint32_t streamId, std::uint32_t, netproxy::StreamEvent event, std::uint8_t) {
+            if (event == netproxy::StreamEvent::Opened) {
+                openedOnB.store(streamId);
+            }
+        });
 
     std::mutex dataMutex;
     std::string payload;
@@ -267,8 +267,7 @@ void serviceDataHandlerReentrant() {
     netproxy::P2PService serviceB;
 
     std::atomic<int> pong{0};
-    serviceB.setDataHandler(
-        [&pong](std::uint32_t, std::uint32_t, const char*, std::size_t) { pong.fetch_add(1); });
+    serviceB.setDataHandler([&pong](std::uint32_t, std::uint32_t, const char*, std::size_t) { pong.fetch_add(1); });
 
     serviceA.setDataHandler([&serviceA](std::uint32_t streamId, std::uint32_t, const char*, std::size_t) {
         test::checkTrue(serviceA.sendData(streamId, "pong", 4), "重入: 回调内回发受理");

@@ -22,10 +22,12 @@ struct DiscoveryConfig {
 };
 
 /**
- * 节点管理器，运行在业务线程。
+ * 对端目录，运行在业务线程。
  *
- * 只负责状态：维护节点表、驱动周期公告、淘汰过期节点。
+ * 只负责状态：维护对端表、驱动周期公告、淘汰过期节点。
  * 组播 socket 由 NodeDiscovery 持有，公告报文通过回调推入。
+ *
+ * 线程模型：状态写入只在业务线程；查询接口内部加锁。
  */
 class PeerDirectory final {
 public:
@@ -42,7 +44,7 @@ public:
      * @param business 业务线程循环，必须比本对象活得久。
      */
     PeerDirectory(NodeDiscovery& discovery, std::uint32_t nodeId, const DiscoveryConfig& config, core::IoLoop& io,
-                core::TaskLoop& business);
+                  core::TaskLoop& business);
 
     // 析构时停止定时任务。
     ~PeerDirectory();
@@ -107,16 +109,16 @@ private:
     // 业务线程：安排下一次 tick。
     void scheduleTick();
 
-    DiscoveryConfig config_;
-    NodeDiscovery& discovery_;
-    std::uint32_t nodeId_ = 0;
-    PeerTable peers_;
-    core::IoLoop& io_;
-    core::TaskLoop& business_;
-    mutable std::mutex handlerMutex_;
-    PeerHandler handler_;
-    std::atomic<bool> running_{false};
-    std::chrono::steady_clock::time_point lastAnnounce_{};
+    DiscoveryConfig config_;                               // 公告周期与过期参数
+    NodeDiscovery& discovery_;                             // 发现通道，持有组播 socket
+    std::uint32_t nodeId_ = 0;                             // 本节点标识
+    PeerTable peers_;                                      // 对端表（不含本机）
+    core::IoLoop& io_;                                     // I/O 线程循环，用于投递公告
+    core::TaskLoop& business_;                             // 业务线程循环，用于 tick
+    mutable std::mutex handlerMutex_;                      // 保护 handler_
+    PeerHandler handler_;                                  // 新节点回调
+    std::atomic<bool> running_{false};                     // 是否已 start 且未 stop
+    std::chrono::steady_clock::time_point lastAnnounce_{}; // 最近一次公告时间
 };
 
 } // namespace netproxy::node

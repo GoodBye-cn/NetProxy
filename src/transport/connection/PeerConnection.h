@@ -195,7 +195,7 @@ public:
 private:
     // 已发送未确认的帧。
     struct PendingFrame {
-        protocol::PeerFrame frame;                                // 已分配序号的帧
+        protocol::PeerFrame frame;                      // 已分配序号的帧
         std::chrono::steady_clock::time_point sentAt{}; // 最近一次发送时间，用于 RTO
         int retransmitCount = 0;                        // 已重传次数
     };
@@ -239,7 +239,7 @@ private:
     net::IPAddress peer_;           // 对端地址与端口
     PeerConfig config_;             // 连接参数
     Sender sender_;                 // 报文发送函数
-    HasStreams hasStreams_;   // 流表非空判定，可为空
+    HasStreams hasStreams_;         // 流表非空判定，可为空
 
     // 握手状态
     ConnectionState state_ = ConnectionState::Connecting; // 当前状态
@@ -249,15 +249,15 @@ private:
     std::chrono::steady_clock::time_point helloSentAt_{}; // 最近一次发送 Hello 的时间
 
     // 发送侧
-    std::uint32_t sendNext_ = 0;          // 下一个待分配序号
-    std::uint32_t sendBase_ = 0;          // 最老的未确认序号
-    std::uint32_t peerWindow_ = 16;       // 对端通告的窗口，初始取 sendWindow
-    std::deque<PendingFrame> sendQueue_;  // 已分配序号、等待确认的帧，按序号升序
+    std::uint32_t sendNext_ = 0;                    // 下一个待分配序号
+    std::uint32_t sendBase_ = 0;                    // 最老的未确认序号
+    std::uint32_t peerWindow_ = 16;                 // 对端通告的窗口，初始取 sendWindow
+    std::deque<PendingFrame> sendQueue_;            // 已分配序号、等待确认的帧，按序号升序
     std::deque<protocol::PeerFrame> pendingFrames_; // 窗口满时暂存，尚未分配序号
-    int duplicateAcks_ = 0;               // 连续重复 ACK 次数，达到 3 触发快速重传
+    int duplicateAcks_ = 0;                         // 连续重复 ACK 次数，达到 3 触发快速重传
 
     // 接收侧
-    std::uint32_t receiveNext_ = 0;                    // 期望收到的下一个序号
+    std::uint32_t receiveNext_ = 0;                              // 期望收到的下一个序号
     std::map<std::uint32_t, protocol::PeerFrame> receiveBuffer_; // 乱序缓存，上限 receiveWindow
 
     // 心跳与超时
@@ -268,7 +268,7 @@ private:
 
     // 回调
     FrameHandler frameHandler_;
-    CloseHandler closeHandler_;
+    CloseHandler closeHandler_; // 进入 Closed 时触发一次
 };
 
 } // namespace netproxy::transport

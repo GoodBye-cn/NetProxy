@@ -13,8 +13,8 @@ namespace netproxy::node {
 
 // 已发现节点的记录，附带最近一次收到公告的时间。
 struct PeerRecord {
-    PeerInfo info;
-    std::chrono::steady_clock::time_point lastSeen;
+    PeerInfo info;                                  // 对端标识、地址与端口
+    std::chrono::steady_clock::time_point lastSeen; // 最近一次收到公告的时间
 };
 
 /**
@@ -86,8 +86,8 @@ public:
     void clear();
 
 private:
-    mutable std::mutex mutex_;
-    std::unordered_map<std::uint32_t, PeerRecord> peers_;
+    mutable std::mutex mutex_;                            // 保护 peers_
+    std::unordered_map<std::uint32_t, PeerRecord> peers_; // 对端标识到记录的映射
 };
 
 } // namespace netproxy::node

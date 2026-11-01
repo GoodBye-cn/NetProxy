@@ -19,8 +19,12 @@ public:
     ScopedEnv(const ScopedEnv&) = delete;
     ScopedEnv& operator=(const ScopedEnv&) = delete;
 
-    JNIEnv* get() const { return env_; }
-    explicit operator bool() const { return env_ != nullptr; }
+    JNIEnv* get() const {
+        return env_;
+    }
+    explicit operator bool() const {
+        return env_ != nullptr;
+    }
 
 private:
     JNIEnv* env_ = nullptr;

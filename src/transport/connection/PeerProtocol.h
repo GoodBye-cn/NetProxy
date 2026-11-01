@@ -16,9 +16,9 @@ namespace netproxy::transport {
  */
 struct HelloMessage {
     std::uint8_t type = static_cast<std::uint8_t>(protocol::HelloType::Hello);
-    std::uint32_t nodeId = 0;
-    std::uint32_t nonce = 0;
-    std::uint8_t reason = 0; // HelloReject 使用
+    std::uint32_t nodeId = 0; // 发送方节点标识
+    std::uint32_t nonce = 0;  // 握手随机数；HelloReject 时为 0
+    std::uint8_t reason = 0;  // HelloReject 使用
 };
 
 /**

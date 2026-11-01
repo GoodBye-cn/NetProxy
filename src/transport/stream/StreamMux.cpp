@@ -65,6 +65,8 @@ void StreamMux::onConnectionClosed(protocol::CloseReason reason) {
         std::lock_guard<std::mutex> lock(mutex_);
         connected_ = false;
 
+        // 排队中的流还没发出 StreamOpen，对端不知道它存在：按超时拒绝。
+        // 已发出的流按连接关闭原因广播 Closed，与拆分前 manager 的行为一致。
         for (const auto& entry : streams_) {
             const bool queued = isPendingLocked(entry.first);
             events.push_back({entry.first, queued ? protocol::StreamEvent::Rejected : protocol::StreamEvent::Closed,
@@ -75,6 +77,7 @@ void StreamMux::onConnectionClosed(protocol::CloseReason reason) {
         pending_.clear();
     }
 
+    // 事件在锁外逐条回调，回调里可能再次进入 sendData / closeStream。
     dispatch({}, events);
 }
 
@@ -145,8 +148,8 @@ bool StreamMux::closeStream(std::uint32_t streamId) {
 
     // 排队中的流还没发过 StreamOpen，对端不知道它，不必发 StreamClose。
     if (!queued) {
-        protocol::PeerFrame frame = makeStreamFrame(protocol::FrameType::StreamClose, streamId,
-                                          reasonPayload(protocol::CloseReason::Local));
+        protocol::PeerFrame frame =
+            makeStreamFrame(protocol::FrameType::StreamClose, streamId, reasonPayload(protocol::CloseReason::Local));
         if (sender_) {
             sender_(std::move(frame));
         }
@@ -213,8 +216,7 @@ void StreamMux::handleStreamOpen(const protocol::PeerFrame& frame) {
             streams_.emplace(frame.streamId, std::move(stream));
 
             frames.push_back(makeStreamFrame(protocol::FrameType::StreamAccept, frame.streamId));
-            events.push_back(
-                {frame.streamId, protocol::StreamEvent::Opened, static_cast<protocol::CloseReason>(0)});
+            events.push_back({frame.streamId, protocol::StreamEvent::Opened, static_cast<protocol::CloseReason>(0)});
         }
     }
 
@@ -326,6 +328,8 @@ bool StreamMux::isPendingLocked(std::uint32_t streamId) const {
 }
 
 void StreamMux::dispatch(std::vector<protocol::PeerFrame> frames, const std::vector<Emit>& events) {
+    // 先发帧再回调：与拆分前「先发 StreamAccept 再回调 Opened」的顺序一致，
+    // 应用收到 Opened 时接受帧已经在发送队列里。
     for (protocol::PeerFrame& frame : frames) {
         if (sender_) {
             sender_(std::move(frame));

@@ -8,10 +8,10 @@
 
 namespace {
 
-using netproxy::protocol::FrameType;
 using netproxy::protocol::CloseReason;
-using netproxy::protocol::StreamEvent;
+using netproxy::protocol::FrameType;
 using netproxy::protocol::PeerFrame;
+using netproxy::protocol::StreamEvent;
 using netproxy::transport::StreamConfig;
 using netproxy::transport::StreamMux;
 using netproxy::transport::StreamRecord;
@@ -215,7 +215,8 @@ void pendingStreamRejectedOnClose() {
 
     test::checkFalse(mux.ownsStream(6), "断连: 排队流被清理");
     test::checkTrue(!events.types.empty() && events.types.back() == StreamEvent::Rejected, "断连: 排队流为 Rejected");
-    test::checkTrue(!events.reasons.empty() && events.reasons.back() == CloseReason::Timeout, "断连: 排队流原因为 Timeout");
+    test::checkTrue(!events.reasons.empty() && events.reasons.back() == CloseReason::Timeout,
+                    "断连: 排队流原因为 Timeout");
 }
 
 void openStreamClosedOnConnectionLoss() {
@@ -256,9 +257,8 @@ void dataDeliveryReentersSendData() {
     mux.onFrame(streamFrame(FrameType::StreamOpen, 10));
 
     // 应用在 DataHandler 内立即回发：Mux 持锁回调会在这里自锁。
-    mux.setDataHandler([&mux](std::uint32_t streamId, std::uint32_t, const char*, std::size_t) {
-        mux.sendData(streamId, "pong", 4);
-    });
+    mux.setDataHandler(
+        [&mux](std::uint32_t streamId, std::uint32_t, const char*, std::size_t) { mux.sendData(streamId, "pong", 4); });
 
     mux.onFrame(dataFrame(10, "ping"));
 
@@ -269,7 +269,8 @@ void unknownStreamDataDropped() {
     Capture capture;
     StreamMux mux(0x22, smallConfig(4), capture.sender());
 
-    mux.setDataHandler([](std::uint32_t, std::uint32_t, const char*, std::size_t) { test::checkTrue(false, "未知流不应交付"); });
+    mux.setDataHandler(
+        [](std::uint32_t, std::uint32_t, const char*, std::size_t) { test::checkTrue(false, "未知流不应交付"); });
     mux.onFrame(dataFrame(404, "x"));
 
     test::checkEquals(static_cast<int>(mux.streams().size()), 0, "未知流: 不建表");
