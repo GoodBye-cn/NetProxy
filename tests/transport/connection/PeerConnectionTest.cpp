@@ -6,7 +6,7 @@
 
 #include "TestSupport.h"
 #include "net/Socket.h"
-#include "transport/PeerConnection.h"
+#include "transport/connection/PeerConnection.h"
 
 namespace {
 
@@ -14,12 +14,11 @@ using netproxy::net::IPAddress;
 using netproxy::protocol::FrameType;
 using netproxy::protocol::HelloType;
 using netproxy::protocol::Reason;
-using netproxy::protocol::StreamEvent;
 using netproxy::transport::ConnectionState;
 using netproxy::transport::HelloMessage;
 using netproxy::transport::PeerConfig;
 using netproxy::transport::PeerConnection;
-using netproxy::transport::PeerFrame;
+using netproxy::protocol::PeerFrame;
 using netproxy::transport::PeerProtocol;
 
 using Clock = std::chrono::steady_clock;
@@ -86,15 +85,16 @@ void completeHandshake(Capture& capture, PeerConnection& connection) {
     connection.onHelloAck(ack);
 }
 
-void acceptStream(PeerConnection& connection, std::uint32_t streamId, std::uint32_t seq) {
-    PeerFrame accept;
-    accept.type = static_cast<std::uint8_t>(FrameType::StreamAccept);
-    accept.nodeId = 0x22;
-    accept.connectionSeq = seq;
-    accept.acknowledge = seq + 1;
-    accept.window = 8;
-    accept.streamId = streamId;
-    connection.onFrame(accept);
+PeerFrame dataFrame(std::uint32_t seq, const std::string& payload) {
+    PeerFrame frame;
+    frame.type = static_cast<std::uint8_t>(FrameType::Data);
+    frame.nodeId = 0x22;
+    frame.connectionSeq = seq;
+    frame.acknowledge = seq + 1;
+    frame.window = 8;
+    frame.streamId = 1;
+    frame.payload = payload;
+    return frame;
 }
 
 void helloRetriesAndTimeout() {
@@ -127,6 +127,9 @@ void helloRejectCloses() {
     Capture capture;
     PeerConnection connection(0x22, 0x11, IPAddress::parse("127.0.0.1", 9000), fastConfig(), capture.sender());
 
+    std::atomic<int> closed{0};
+    connection.setCloseHandler([&closed](Reason) { closed.fetch_add(1); });
+
     connection.open();
 
     HelloMessage reject;
@@ -136,56 +139,44 @@ void helloRejectCloses() {
     connection.onHelloReject(reject);
 
     test::checkTrue(connection.state() == ConnectionState::Closed, "连接: 被拒绝后关闭");
+    test::checkEquals(closed.load(), 1, "连接: 被拒绝后回调 CloseHandler");
 }
 
-void openStreamFlow() {
+void orderedDelivery() {
     Capture capture;
     PeerConnection connection(0x22, 0x11, IPAddress::parse("127.0.0.1", 9000), fastConfig(), capture.sender());
     completeHandshake(capture, connection);
 
-    std::atomic<int> opened{0};
-    connection.setStreamHandler([&opened](std::uint32_t, StreamEvent event, Reason) {
-        if (event == StreamEvent::Opened) {
-            opened.fetch_add(1);
-        }
-    });
+    std::vector<std::string> delivered;
+    connection.setFrameHandler([&delivered](const PeerFrame& frame) { delivered.push_back(frame.payload); });
 
-    test::checkTrue(connection.openStream(1), "流: 打开请求成功");
-    test::checkTrue(!connection.openStream(1), "流: 重复打开被拒绝");
+    // 先到 seq=1，再到 seq=0：按序交付应是 one、two。
+    connection.onFrame(dataFrame(1, "two"));
+    test::checkEquals(static_cast<int>(delivered.size()), 0, "有序: 乱序帧被缓存");
 
-    PeerFrame frame;
-    test::checkTrue(capture.lastFrame(frame), "流: 捕获 StreamOpen");
-    test::checkTrue(frame.type == static_cast<std::uint8_t>(FrameType::StreamOpen), "流: 帧类型为 StreamOpen");
+    connection.onFrame(dataFrame(0, "one"));
+    test::checkEquals(static_cast<int>(delivered.size()), 2, "有序: 两帧均已交付");
 
-    acceptStream(connection, 1, 0);
-    test::checkEquals(opened.load(), 1, "流: 回调 Opened");
+    if (delivered.size() == 2) {
+        test::checkEquals(delivered[0], std::string("one"), "有序: 第一帧是 one");
+        test::checkEquals(delivered[1], std::string("two"), "有序: 第二帧是 two");
+    }
 }
 
-void dataDelivery() {
+void duplicateFrameDropped() {
     Capture capture;
     PeerConnection connection(0x22, 0x11, IPAddress::parse("127.0.0.1", 9000), fastConfig(), capture.sender());
     completeHandshake(capture, connection);
-    connection.openStream(1);
-    acceptStream(connection, 1, 0);
 
-    std::string received;
-    std::uint32_t receivedStream = 0;
-    connection.setDataHandler([&received, &receivedStream](std::uint32_t streamId, const char* data, std::size_t size) {
-        receivedStream = streamId;
-        received.assign(data, size);
-    });
+    std::atomic<int> delivered{0};
+    connection.setFrameHandler([&delivered](const PeerFrame&) { delivered.fetch_add(1); });
 
-    PeerFrame data;
-    data.type = static_cast<std::uint8_t>(FrameType::Data);
-    data.nodeId = 0x22;
-    data.connectionSeq = 1;
-    data.acknowledge = 1;
-    data.streamId = 1;
-    data.payload = "hello";
-    connection.onFrame(data);
+    connection.onFrame(dataFrame(0, "first"));
+    connection.onFrame(dataFrame(0, "first"));
+    test::checkEquals(delivered.load(), 1, "去重: 重复帧不交付");
 
-    test::checkEquals(received, std::string("hello"), "数据: 按序交付");
-    test::checkEquals(static_cast<int>(receivedStream), 1, "数据: 流标识正确");
+    connection.onFrame(dataFrame(1, "second"));
+    test::checkEquals(delivered.load(), 2, "去重: 后续序号正常交付");
 }
 
 void windowLimitsSending() {
@@ -194,12 +185,14 @@ void windowLimitsSending() {
     config.sendWindow = 4;
     PeerConnection connection(0x22, 0x11, IPAddress::parse("127.0.0.1", 9000), config, capture.sender());
     completeHandshake(capture, connection);
-    connection.openStream(1);
-    acceptStream(connection, 1, 0);
 
     const std::size_t before = capture.countFrames(FrameType::Data);
     for (int index = 0; index < 10; ++index) {
-        test::checkTrue(connection.sendData(1, "x", 1), "窗口: 提交成功");
+        PeerFrame frame;
+        frame.type = static_cast<std::uint8_t>(FrameType::Data);
+        frame.streamId = 1;
+        frame.payload = "x";
+        test::checkTrue(connection.send(std::move(frame)), "窗口: 提交成功");
     }
     const std::size_t sent = capture.countFrames(FrameType::Data) - before;
     test::checkEquals(static_cast<int>(sent), 4, "窗口: 只发出窗口内的帧");
@@ -219,33 +212,104 @@ void retransmitOnTimeout() {
     Capture capture;
     PeerConnection connection(0x22, 0x11, IPAddress::parse("127.0.0.1", 9000), fastConfig(), capture.sender());
     completeHandshake(capture, connection);
-    connection.openStream(1);
-    acceptStream(connection, 1, 0);
 
-    test::checkTrue(connection.openStream(2), "重传: 准备第二条流");
+    PeerFrame frame;
+    frame.type = static_cast<std::uint8_t>(FrameType::Data);
+    frame.streamId = 1;
+    frame.payload = "x";
+    test::checkTrue(connection.send(std::move(frame)), "重传: 提交成功");
+
     const std::size_t before = capture.packets.size();
-
     connection.tick(Clock::now() + std::chrono::milliseconds(20));
     test::checkTrue(capture.packets.size() > before, "重传: 超时后重发队首");
 }
 
-void streamCloseCallback() {
+void payloadLimitRejected() {
+    Capture capture;
+    PeerConfig config = fastConfig();
+    config.maxPayloadSize = 8;
+    PeerConnection connection(0x22, 0x11, IPAddress::parse("127.0.0.1", 9000), config, capture.sender());
+    completeHandshake(capture, connection);
+
+    PeerFrame tooLarge;
+    tooLarge.type = static_cast<std::uint8_t>(FrameType::Data);
+    tooLarge.streamId = 1;
+    tooLarge.payload.assign(9, 'x');
+    test::checkFalse(connection.send(std::move(tooLarge)), "长度: 超过 maxPayloadSize 被拒绝");
+
+    PeerFrame exactly;
+    exactly.type = static_cast<std::uint8_t>(FrameType::Data);
+    exactly.streamId = 1;
+    exactly.payload.assign(8, 'x');
+    test::checkTrue(connection.send(std::move(exactly)), "长度: 等于 maxPayloadSize 被接受");
+}
+
+void sendRejectedWhenNotConnected() {
+    Capture capture;
+    PeerConnection connection(0x22, 0x11, IPAddress::parse("127.0.0.1", 9000), fastConfig(), capture.sender());
+
+    PeerFrame frame;
+    frame.type = static_cast<std::uint8_t>(FrameType::Data);
+    frame.streamId = 1;
+    frame.payload = "x";
+    test::checkFalse(connection.send(std::move(frame)), "状态: 未连接时拒绝发送");
+}
+
+void closeHandlerFiresOnce() {
     Capture capture;
     PeerConnection connection(0x22, 0x11, IPAddress::parse("127.0.0.1", 9000), fastConfig(), capture.sender());
     completeHandshake(capture, connection);
-    connection.openStream(1);
-    acceptStream(connection, 1, 0);
 
     std::atomic<int> closed{0};
-    connection.setStreamHandler([&closed](std::uint32_t, StreamEvent event, Reason) {
-        if (event == StreamEvent::Closed) {
-            closed.fetch_add(1);
-        }
+    connection.setCloseHandler([&closed](Reason) { closed.fetch_add(1); });
+
+    connection.close(Reason::Local);
+    connection.close(Reason::Local);
+
+    test::checkTrue(connection.state() == ConnectionState::Closed, "关闭: 状态为 Closed");
+    test::checkEquals(closed.load(), 1, "关闭: CloseHandler 只触发一次");
+}
+
+void idleCloseUsesStreams() {
+    Capture capture;
+    PeerConfig config = fastConfig();
+    config.idleTimeoutMs = 50;
+
+    bool hasStreams = true;
+    const IPAddress address = IPAddress::parse("127.0.0.1", 9000);
+    PeerConnection connection(0x22, 0x11, address, config, capture.sender(), [&hasStreams] { return hasStreams; });
+    completeHandshake(capture, connection);
+
+    const auto now = Clock::now();
+    connection.tick(now + std::chrono::milliseconds(200));
+    test::checkTrue(connection.isConnected(), "空闲: 仍有流时不关闭");
+
+    hasStreams = false;
+    connection.tick(now + std::chrono::milliseconds(400));
+    test::checkTrue(connection.state() == ConnectionState::Closing, "空闲: 无流且超时后进入 Closing");
+}
+
+void remoteCloseNotifiesHandler() {
+    Capture capture;
+    PeerConnection connection(0x22, 0x11, IPAddress::parse("127.0.0.1", 9000), fastConfig(), capture.sender());
+    completeHandshake(capture, connection);
+
+    std::atomic<int> closed{0};
+    Reason observed = Reason::Local;
+    connection.setCloseHandler([&closed, &observed](Reason reason) {
+        observed = reason;
+        closed.fetch_add(1);
     });
 
-    test::checkTrue(connection.closeStream(1), "关闭: 流关闭成功");
-    test::checkTrue(!connection.closeStream(1), "关闭: 重复关闭返回失败");
-    test::checkEquals(closed.load(), 1, "关闭: 回调 Closed");
+    PeerFrame closeFrame;
+    closeFrame.type = static_cast<std::uint8_t>(FrameType::Close);
+    closeFrame.nodeId = 0x22;
+    closeFrame.payload = std::string(1, static_cast<char>(Reason::Remote));
+    connection.onFrame(closeFrame);
+
+    test::checkTrue(connection.state() == ConnectionState::Closed, "远端关闭: 状态为 Closed");
+    test::checkEquals(closed.load(), 1, "远端关闭: 回调一次");
+    test::checkTrue(observed == Reason::Remote, "远端关闭: 原因为 Remote");
 }
 
 } // namespace
@@ -254,9 +318,13 @@ void runPeerConnectionTests() {
     NETPROXY_CASE(helloRetriesAndTimeout);
     NETPROXY_CASE(helloAckConnects);
     NETPROXY_CASE(helloRejectCloses);
-    NETPROXY_CASE(openStreamFlow);
-    NETPROXY_CASE(dataDelivery);
+    NETPROXY_CASE(orderedDelivery);
+    NETPROXY_CASE(duplicateFrameDropped);
     NETPROXY_CASE(windowLimitsSending);
     NETPROXY_CASE(retransmitOnTimeout);
-    NETPROXY_CASE(streamCloseCallback);
+    NETPROXY_CASE(payloadLimitRejected);
+    NETPROXY_CASE(sendRejectedWhenNotConnected);
+    NETPROXY_CASE(closeHandlerFiresOnce);
+    NETPROXY_CASE(idleCloseUsesStreams);
+    NETPROXY_CASE(remoteCloseNotifiesHandler);
 }

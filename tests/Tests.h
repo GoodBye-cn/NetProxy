@@ -23,3 +23,5 @@ void runP2PServiceTests();
 void runPeerProtocolTests();
 
 void runPeerConnectionTests();
+
+void runStreamMuxTests();

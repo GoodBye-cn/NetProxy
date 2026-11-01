@@ -4,7 +4,8 @@
 #include <cstdint>
 #include <string>
 
-#include "protocol/Protocol.h"
+#include "Frame.h"
+#include "Protocol.h"
 
 namespace netproxy::transport {
 
@@ -18,22 +19,6 @@ struct HelloMessage {
     std::uint32_t nodeId = 0;
     std::uint32_t nonce = 0;
     std::uint8_t reason = 0; // HelloReject 使用
-};
-
-/**
- * 连接帧。
- *
- * 所有帧共用一个连接级序号空间，`streamId` 为 0 表示连接控制。
- */
-struct PeerFrame {
-    std::uint8_t type = static_cast<std::uint8_t>(protocol::FrameType::Data);
-    std::uint32_t nodeId = 0;
-    std::uint32_t connectionSeq = 0;
-    std::uint32_t acknowledge = 0;
-    std::uint16_t window = 0;
-    std::uint16_t payloadLength = 0;
-    std::uint32_t streamId = 0;
-    std::string payload;
 };
 
 /**
@@ -68,7 +53,7 @@ public:
      * @param frame 帧内容。
      * @return 28 字节头 + 负载。
      */
-    static std::string encodeFrame(const PeerFrame& frame);
+    static std::string encodeFrame(const protocol::PeerFrame& frame);
 
     /**
      * 解析连接帧。
@@ -78,7 +63,7 @@ public:
      * @param frame 解析结果，仅在返回 true 时写入。
      * @return 解析成功返回 true。
      */
-    static bool decodeFrame(const void* data, std::size_t size, PeerFrame& frame);
+    static bool decodeFrame(const void* data, std::size_t size, protocol::PeerFrame& frame);
 };
 
 } // namespace netproxy::transport

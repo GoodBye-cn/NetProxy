@@ -1,7 +1,7 @@
 #include "PeerProtocol.h"
 
 // 引入平台字节序转换函数（htonl / ntohs 等）
-#include "net/Socket.h"
+#include "Socket.h"
 
 #include <cstring>
 
@@ -107,7 +107,7 @@ bool PeerProtocol::decodeHello(const void* data, std::size_t size, HelloMessage&
     return true;
 }
 
-std::string PeerProtocol::encodeFrame(const PeerFrame& frame) {
+std::string PeerProtocol::encodeFrame(const protocol::PeerFrame& frame) {
     const std::size_t size = FRAME_HEADER_SIZE + frame.payload.size();
     std::string buffer(size, '\0');
     auto* bytes = reinterpret_cast<unsigned char*>(&buffer[0]);
@@ -136,7 +136,7 @@ std::string PeerProtocol::encodeFrame(const PeerFrame& frame) {
     return buffer;
 }
 
-bool PeerProtocol::decodeFrame(const void* data, std::size_t size, PeerFrame& frame) {
+bool PeerProtocol::decodeFrame(const void* data, std::size_t size, protocol::PeerFrame& frame) {
     if (data == nullptr || size < FRAME_HEADER_SIZE) {
         return false;
     }

@@ -5,8 +5,8 @@
 #include <functional>
 #include <string>
 
-#include "TransportTypes.h"
 #include "core/IoLoop.h"
+#include "transport/connection/TransportTypes.h"
 #include "net/Socket.h"
 #include "net/UDPSocket.h"
 

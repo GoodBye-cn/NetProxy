@@ -8,7 +8,7 @@
 #include "node/NodeManager.h"
 #include "protocol/Protocol.h"
 #include "transport/DataChannel.h"
-#include "transport/PeerConnectionManager.h"
+#include "transport/PeerSessionManager.h"
 
 #include <atomic>
 #include <mutex>
@@ -49,7 +49,7 @@ struct P2PService::Impl {
     std::unique_ptr<transport::DataChannel> channel;
     std::unique_ptr<node::NodeDiscovery> discovery;
     std::unique_ptr<node::NodeManager> node;
-    std::unique_ptr<transport::PeerConnectionManager> connections;
+    std::unique_ptr<transport::PeerSessionManager> connections;
 
     std::mutex handlerMutex;
     PeerHandler handler;
@@ -95,7 +95,6 @@ bool P2PService::start(const P2PServiceConfig& config) {
     transport::PeerConfig peerConfig;
     peerConfig.helloRetryIntervalMs = config.helloRetryIntervalMs;
     peerConfig.helloRetryCount = config.helloRetryCount;
-    peerConfig.maxStreams = config.maxStreamsPerPeer;
     peerConfig.maxPayloadSize = config.maxPayloadSize;
     peerConfig.sendWindow = config.sendWindow;
     peerConfig.receiveWindow = config.receiveWindow;
@@ -104,6 +103,9 @@ bool P2PService::start(const P2PServiceConfig& config) {
     peerConfig.pingIntervalMs = config.pingIntervalMs;
     peerConfig.pingTimeoutMs = config.pingTimeoutMs;
     peerConfig.pingRetryCount = config.pingRetryCount;
+
+    transport::StreamConfig streamConfig;
+    streamConfig.maxStreams = config.maxStreamsPerPeer;
 
     std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
 
@@ -136,8 +138,8 @@ bool P2PService::start(const P2PServiceConfig& config) {
     }
 
     // 4. 连接与流
-    impl_->connections =
-        std::make_unique<transport::PeerConnectionManager>(*impl_->channel, nodeId, peerConfig, impl_->business);
+    impl_->connections = std::make_unique<transport::PeerSessionManager>(*impl_->channel, nodeId, peerConfig,
+                                                                            streamConfig, impl_->business);
 
     Impl* impl = impl_.get();
     impl_->connections->setStreamHandler(
@@ -276,7 +278,7 @@ void P2PService::setPeerHandler(PeerHandler handler) {
 
 bool P2PService::connect(std::uint32_t peerNodeId) {
     net::IPAddress address;
-    transport::PeerConnectionManager* connections = nullptr;
+    transport::PeerSessionManager* connections = nullptr;
 
     {
         std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
@@ -310,7 +312,7 @@ bool P2PService::isConnected(std::uint32_t peerNodeId) const {
 
 std::uint32_t P2PService::openStream(std::uint32_t peerNodeId) {
     net::IPAddress address;
-    transport::PeerConnectionManager* connections = nullptr;
+    transport::PeerSessionManager* connections = nullptr;
 
     {
         std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
@@ -335,7 +337,7 @@ std::uint32_t P2PService::openStream(std::uint32_t peerNodeId) {
 }
 
 bool P2PService::closeStream(std::uint32_t streamId) {
-    transport::PeerConnectionManager* connections = nullptr;
+    transport::PeerSessionManager* connections = nullptr;
     {
         std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
         connections = impl_->connections.get();
@@ -348,7 +350,7 @@ bool P2PService::closeStream(std::uint32_t streamId) {
 }
 
 bool P2PService::sendData(std::uint32_t streamId, const void* data, std::size_t size) {
-    transport::PeerConnectionManager* connections = nullptr;
+    transport::PeerSessionManager* connections = nullptr;
     {
         std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
         connections = impl_->connections.get();

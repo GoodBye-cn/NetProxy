@@ -23,9 +23,10 @@ std::string reasonPayload(protocol::Reason reason) {
 } // namespace
 
 PeerConnection::PeerConnection(std::uint32_t peerNodeId, std::uint32_t localNodeId, const net::IPAddress& peer,
-                               const PeerConfig& config, Sender sender)
+                               const PeerConfig& config, Sender sender, HasStreams hasStreams)
     : peerNodeId_(peerNodeId), localNodeId_(localNodeId), peer_(peer), config_(config), sender_(std::move(sender)),
-      peerWindow_(static_cast<std::uint32_t>(config.sendWindow)), lastActive_(std::chrono::steady_clock::now()) {}
+      hasStreams_(std::move(hasStreams)), peerWindow_(static_cast<std::uint32_t>(config.sendWindow)),
+      lastActive_(std::chrono::steady_clock::now()) {}
 
 PeerConnection::~PeerConnection() = default;
 
@@ -66,15 +67,10 @@ void PeerConnection::acceptHandshake() {
 
 void PeerConnection::onHelloReject(const HelloMessage& message) {
     (void)message;
-    if (state_ == ConnectionState::Closed) {
-        return;
-    }
-
-    state_ = ConnectionState::Closed;
-    closeAllStreams(protocol::Reason::Error);
+    enterClosed(protocol::Reason::Error);
 }
 
-void PeerConnection::onFrame(const PeerFrame& frame) {
+void PeerConnection::onFrame(const protocol::PeerFrame& frame) {
     if (state_ != ConnectionState::Connected && state_ != ConnectionState::Closing) {
         return;
     }
@@ -89,7 +85,7 @@ void PeerConnection::onFrame(const PeerFrame& frame) {
         return; // 纯 ACK 或心跳，不参与有序交付
     }
     if (type == protocol::FrameType::Close) {
-        deliverFrame(frame);
+        enterClosed(protocol::Reason::Remote);
         return;
     }
 
@@ -143,7 +139,9 @@ void PeerConnection::tick(std::chrono::steady_clock::time_point now) {
             }
         }
 
-        if (streams_.empty() && now - lastActive_ >= std::chrono::milliseconds(config_.idleTimeoutMs)) {
+        // 流表在流层：只有「没有活跃流」且空闲超时才关闭连接。
+        const bool hasActiveStreams = hasStreams_ ? hasStreams_() : false;
+        if (!hasActiveStreams && now - lastActive_ >= std::chrono::milliseconds(config_.idleTimeoutMs)) {
             sendControl(protocol::FrameType::Close, reasonPayload(protocol::Reason::Local));
             state_ = ConnectionState::Closing;
             closingSince_ = now;
@@ -152,8 +150,7 @@ void PeerConnection::tick(std::chrono::steady_clock::time_point now) {
     }
     case ConnectionState::Closing: {
         if (now - closingSince_ >= std::chrono::milliseconds(config_.closeTimeoutMs)) {
-            state_ = ConnectionState::Closed;
-            closeAllStreams(protocol::Reason::Timeout);
+            enterClosed(protocol::Reason::Timeout);
         }
         return;
     }
@@ -162,57 +159,16 @@ void PeerConnection::tick(std::chrono::steady_clock::time_point now) {
     }
 }
 
-bool PeerConnection::openStream(std::uint32_t streamId) {
-    if (state_ != ConnectionState::Connected || streamId == 0) {
+bool PeerConnection::send(protocol::PeerFrame frame) {
+    if (state_ != ConnectionState::Connected) {
         return false;
     }
 
-    if (streams_.find(streamId) != streams_.end() || streams_.size() >= config_.maxStreams) {
+    if (frame.payload.size() > config_.maxPayloadSize) {
         return false;
     }
 
-    streams_.emplace(streamId, StreamState::Opening);
-
-    PeerFrame frame;
-    frame.type = static_cast<std::uint8_t>(protocol::FrameType::StreamOpen);
-    frame.streamId = streamId;
-    queueFrame(frame);
-    return true;
-}
-
-bool PeerConnection::closeStream(std::uint32_t streamId) {
-    const auto entry = streams_.find(streamId);
-    if (entry == streams_.end()) {
-        return false;
-    }
-
-    streams_.erase(entry);
-
-    PeerFrame frame;
-    frame.type = static_cast<std::uint8_t>(protocol::FrameType::StreamClose);
-    frame.streamId = streamId;
-    frame.payload = reasonPayload(protocol::Reason::Local);
-    queueFrame(frame);
-
-    emitStreamEvent(streamId, protocol::StreamEvent::Closed, protocol::Reason::Local);
-    return true;
-}
-
-bool PeerConnection::sendData(std::uint32_t streamId, const void* data, std::size_t size) {
-    if (state_ != ConnectionState::Connected || data == nullptr || size == 0 || size > config_.maxPayloadSize) {
-        return false;
-    }
-
-    const auto entry = streams_.find(streamId);
-    if (entry == streams_.end() || entry->second != StreamState::Open) {
-        return false;
-    }
-
-    PeerFrame frame;
-    frame.type = static_cast<std::uint8_t>(protocol::FrameType::Data);
-    frame.streamId = streamId;
-    frame.payload.assign(static_cast<const char*>(data), size);
-    queueFrame(frame);
+    queueFrame(std::move(frame));
     return true;
 }
 
@@ -222,11 +178,7 @@ void PeerConnection::close(protocol::Reason reason) {
     }
 
     sendControl(protocol::FrameType::Close, reasonPayload(reason));
-    state_ = ConnectionState::Closed;
-    sendQueue_.clear();
-    pendingFrames_.clear();
-    receiveBuffer_.clear();
-    closeAllStreams(reason);
+    enterClosed(reason);
 }
 
 bool PeerConnection::isConnected() const {
@@ -241,12 +193,20 @@ std::uint32_t PeerConnection::peerNodeId() const {
     return peerNodeId_;
 }
 
-void PeerConnection::setStreamHandler(StreamCallback handler) {
-    streamHandler_ = std::move(handler);
+const net::IPAddress& PeerConnection::peer() const {
+    return peer_;
 }
 
-void PeerConnection::setDataHandler(DataCallback handler) {
-    dataHandler_ = std::move(handler);
+std::size_t PeerConnection::maxPayloadSize() const {
+    return config_.maxPayloadSize;
+}
+
+void PeerConnection::setFrameHandler(FrameHandler handler) {
+    frameHandler_ = std::move(handler);
+}
+
+void PeerConnection::setCloseHandler(CloseHandler handler) {
+    closeHandler_ = std::move(handler);
 }
 
 void PeerConnection::sendHello() {
@@ -261,7 +221,7 @@ void PeerConnection::sendHello() {
     helloSentAt_ = std::chrono::steady_clock::now();
 }
 
-void PeerConnection::queueFrame(PeerFrame frame) {
+void PeerConnection::queueFrame(protocol::PeerFrame frame) {
     const std::uint32_t limit =
         static_cast<std::uint32_t>(std::min(config_.sendWindow, static_cast<std::size_t>(peerWindow_)));
     if (sendNext_ - sendBase_ < limit) {
@@ -271,7 +231,7 @@ void PeerConnection::queueFrame(PeerFrame frame) {
     }
 }
 
-void PeerConnection::sendFrame(PeerFrame frame) {
+void PeerConnection::sendFrame(protocol::PeerFrame frame) {
     frame.nodeId = localNodeId_;
     frame.connectionSeq = sendNext_++;
     frame.acknowledge = receiveNext_;
@@ -296,7 +256,7 @@ void PeerConnection::flushWindow() {
             break;
         }
 
-        PeerFrame frame = std::move(pendingFrames_.front());
+        protocol::PeerFrame frame = std::move(pendingFrames_.front());
         pendingFrames_.pop_front();
         sendFrame(std::move(frame));
     }
@@ -333,7 +293,7 @@ void PeerConnection::handleAck(std::uint32_t acknowledge, std::uint16_t window) 
     }
 }
 
-void PeerConnection::receiveFrame(const PeerFrame& frame) {
+void PeerConnection::receiveFrame(const protocol::PeerFrame& frame) {
     if (frame.connectionSeq < receiveNext_) {
         sendAck();
         return;
@@ -347,7 +307,7 @@ void PeerConnection::receiveFrame(const PeerFrame& frame) {
         return;
     }
 
-    deliverFrame(frame);
+    deliverOrdered(frame);
     ++receiveNext_;
 
     while (true) {
@@ -356,7 +316,7 @@ void PeerConnection::receiveFrame(const PeerFrame& frame) {
             break;
         }
 
-        deliverFrame(entry->second);
+        deliverOrdered(entry->second);
         receiveBuffer_.erase(entry);
         ++receiveNext_;
     }
@@ -364,96 +324,10 @@ void PeerConnection::receiveFrame(const PeerFrame& frame) {
     sendAck();
 }
 
-void PeerConnection::deliverFrame(const PeerFrame& frame) {
-    const auto type = static_cast<protocol::FrameType>(frame.type);
-
-    switch (type) {
-    case protocol::FrameType::Data:
-        if (dataHandler_) {
-            dataHandler_(frame.streamId, frame.payload.data(), frame.payload.size());
-        }
-        break;
-    case protocol::FrameType::StreamOpen:
-    case protocol::FrameType::StreamAccept:
-    case protocol::FrameType::StreamReject:
-    case protocol::FrameType::StreamClose:
-        handleStreamFrame(frame);
-        break;
-    case protocol::FrameType::Ping:
-        break;
-    case protocol::FrameType::Close:
-        state_ = ConnectionState::Closed;
-        sendQueue_.clear();
-        pendingFrames_.clear();
-        closeAllStreams(protocol::Reason::Remote);
-        break;
+void PeerConnection::deliverOrdered(const protocol::PeerFrame& frame) {
+    if (frameHandler_) {
+        frameHandler_(frame);
     }
-}
-
-void PeerConnection::handleStreamFrame(const PeerFrame& frame) {
-    const auto type = static_cast<protocol::FrameType>(frame.type);
-
-    if (type == protocol::FrameType::StreamOpen) {
-        const auto existing = streams_.find(frame.streamId);
-        if (existing != streams_.end()) {
-            if (existing->second == StreamState::Open || existing->second == StreamState::Opening) {
-                PeerFrame accept;
-                accept.type = static_cast<std::uint8_t>(protocol::FrameType::StreamAccept);
-                accept.streamId = frame.streamId;
-                queueFrame(accept);
-            }
-            return;
-        }
-
-        if (streams_.size() >= config_.maxStreams) {
-            PeerFrame reject;
-            reject.type = static_cast<std::uint8_t>(protocol::FrameType::StreamReject);
-            reject.streamId = frame.streamId;
-            reject.payload = reasonPayload(protocol::Reason::Error);
-            queueFrame(reject);
-            return;
-        }
-
-        streams_.emplace(frame.streamId, StreamState::Open);
-
-        PeerFrame accept;
-        accept.type = static_cast<std::uint8_t>(protocol::FrameType::StreamAccept);
-        accept.streamId = frame.streamId;
-        queueFrame(accept);
-
-        emitStreamEvent(frame.streamId, protocol::StreamEvent::Opened, static_cast<protocol::Reason>(0));
-        return;
-    }
-
-    if (type == protocol::FrameType::StreamAccept) {
-        const auto entry = streams_.find(frame.streamId);
-        if (entry == streams_.end() || entry->second != StreamState::Opening) {
-            return;
-        }
-
-        entry->second = StreamState::Open;
-        emitStreamEvent(frame.streamId, protocol::StreamEvent::Opened, static_cast<protocol::Reason>(0));
-        return;
-    }
-
-    if (type == protocol::FrameType::StreamReject) {
-        const auto entry = streams_.find(frame.streamId);
-        if (entry == streams_.end()) {
-            return;
-        }
-
-        streams_.erase(entry);
-        emitStreamEvent(frame.streamId, protocol::StreamEvent::Rejected, protocol::Reason::Error);
-        return;
-    }
-
-    const auto entry = streams_.find(frame.streamId);
-    if (entry == streams_.end()) {
-        return;
-    }
-
-    streams_.erase(entry);
-    emitStreamEvent(frame.streamId, protocol::StreamEvent::Closed, protocol::Reason::Remote);
 }
 
 void PeerConnection::sendAck() {
@@ -461,7 +335,7 @@ void PeerConnection::sendAck() {
 }
 
 void PeerConnection::sendControl(protocol::FrameType type, const std::string& payload) {
-    PeerFrame frame;
+    protocol::PeerFrame frame;
     frame.type = static_cast<std::uint8_t>(type);
     frame.nodeId = localNodeId_;
     frame.connectionSeq = 0; // 控制帧不占交付序号
@@ -475,20 +349,19 @@ void PeerConnection::sendControl(protocol::FrameType type, const std::string& pa
     }
 }
 
-void PeerConnection::closeAllStreams(protocol::Reason reason) {
-    if (streams_.empty()) {
+void PeerConnection::enterClosed(protocol::Reason reason) {
+    if (state_ == ConnectionState::Closed) {
         return;
     }
 
-    for (const auto& entry : streams_) {
-        emitStreamEvent(entry.first, protocol::StreamEvent::Closed, reason);
-    }
-    streams_.clear();
-}
+    state_ = ConnectionState::Closed;
+    sendQueue_.clear();
+    pendingFrames_.clear();
+    receiveBuffer_.clear();
 
-void PeerConnection::emitStreamEvent(std::uint32_t streamId, protocol::StreamEvent event, protocol::Reason reason) {
-    if (streamHandler_) {
-        streamHandler_(streamId, event, reason);
+    // 回调只触发一次；流层据此广播流关闭。
+    if (closeHandler_) {
+        closeHandler_(reason);
     }
 }
 

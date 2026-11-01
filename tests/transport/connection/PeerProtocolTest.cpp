@@ -1,14 +1,14 @@
 #include <string>
 
 #include "TestSupport.h"
-#include "transport/PeerProtocol.h"
+#include "transport/connection/PeerProtocol.h"
 
 namespace {
 
 using netproxy::protocol::FrameType;
 using netproxy::protocol::HelloType;
 using netproxy::transport::HelloMessage;
-using netproxy::transport::PeerFrame;
+using netproxy::protocol::PeerFrame;
 using netproxy::transport::PeerProtocol;
 
 void helloRoundTrip() {
