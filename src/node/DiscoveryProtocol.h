@@ -9,7 +9,7 @@
 namespace netproxy::node {
 
 // 节点间报文类型。
-enum class NodeMessageType : std::uint8_t {
+enum class AnnounceType : std::uint8_t {
     Announce = 1, // 公告自身地址与数据端口
     Bye = 2       // 通知即将离开
 };
@@ -20,11 +20,11 @@ enum class NodeMessageType : std::uint8_t {
  * 布局：magic(4) + version(1) + type(1) + address(4) + port(2) + nodeId(4)，
  * 全部网络字节序。address 填 0 表示发送方未声明，接收方回退到报文源地址。
  */
-class NodeMessage final {
+class AnnounceMessage final {
 public:
     static constexpr std::size_t SIZE = 16;
 
-    NodeMessageType type = NodeMessageType::Announce;
+    AnnounceType type = AnnounceType::Announce;
     net::IPAddress address;   // 发送方声明的可连接地址
     std::uint32_t nodeId = 0; // 发送方节点标识
     std::uint16_t port = 0;   // 发送方数据端口
@@ -46,7 +46,7 @@ public:
      * @param message 解析结果，仅在返回 true 时被写入。
      * @return 解析成功返回 true；任一字段非法返回 false。
      */
-    static bool decode(const void* data, std::size_t size, NodeMessage& message);
+    static bool decode(const void* data, std::size_t size, AnnounceMessage& message);
 };
 
 } // namespace netproxy::node

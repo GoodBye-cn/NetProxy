@@ -158,11 +158,11 @@ public:
     /**
      * 查询指定节点，线程安全。
      *
-     * @param nodeId 节点标识。
+     * @param peerNodeId 对端节点标识。
      * @param peer 输出节点信息，仅在返回 true 时被写入。
      * @return 已发现返回 true。
      */
-    bool findPeer(std::uint32_t nodeId, PeerInfo& peer) const;
+    bool findPeer(std::uint32_t peerNodeId, PeerInfo& peer) const;
 
     /**
      * 设置发现新节点时的回调。

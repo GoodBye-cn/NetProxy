@@ -15,7 +15,7 @@
 namespace netproxy::node {
 
 // 节点管理配置。
-struct NodeConfig {
+struct DiscoveryConfig {
     int announceIntervalMs = 3000; // 公告周期
     int peerTimeoutMs = 10000;     // 节点过期时间
     int tickIntervalMs = 200;      // 定时检查粒度
@@ -27,7 +27,7 @@ struct NodeConfig {
  * 只负责状态：维护节点表、驱动周期公告、淘汰过期节点。
  * 组播 socket 由 NodeDiscovery 持有，公告报文通过回调推入。
  */
-class NodeManager final {
+class PeerDirectory final {
 public:
     // 发现新节点时的回调，运行在业务线程。
     using PeerHandler = std::function<void(const PeerInfo& peer)>;
@@ -41,14 +41,14 @@ public:
      * @param io I/O 线程循环，必须比本对象活得久。
      * @param business 业务线程循环，必须比本对象活得久。
      */
-    NodeManager(NodeDiscovery& discovery, std::uint32_t nodeId, const NodeConfig& config, core::IoLoop& io,
+    PeerDirectory(NodeDiscovery& discovery, std::uint32_t nodeId, const DiscoveryConfig& config, core::IoLoop& io,
                 core::TaskLoop& business);
 
     // 析构时停止定时任务。
-    ~NodeManager();
+    ~PeerDirectory();
 
-    NodeManager(const NodeManager&) = delete;
-    NodeManager& operator=(const NodeManager&) = delete;
+    PeerDirectory(const PeerDirectory&) = delete;
+    PeerDirectory& operator=(const PeerDirectory&) = delete;
 
     /**
      * 启动节点管理。
@@ -79,11 +79,11 @@ public:
     /**
      * 查询指定节点，线程安全。
      *
-     * @param nodeId 节点标识。
+     * @param peerNodeId 对端节点标识。
      * @param peer 输出节点信息，仅在返回 true 时被写入。
      * @return 已发现返回 true。
      */
-    bool findPeer(std::uint32_t nodeId, PeerInfo& peer) const;
+    bool findPeer(std::uint32_t peerNodeId, PeerInfo& peer) const;
 
     /**
      * 设置新节点回调。
@@ -107,7 +107,7 @@ private:
     // 业务线程：安排下一次 tick。
     void scheduleTick();
 
-    NodeConfig config_;
+    DiscoveryConfig config_;
     NodeDiscovery& discovery_;
     std::uint32_t nodeId_ = 0;
     PeerTable peers_;

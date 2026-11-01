@@ -7,6 +7,26 @@
 - 连接建立在数据端口上，每对节点一条连接；连接上可开多条流，用 `streamId` 区分。
 - 线程之间只通过消息投递通信，socket 与业务状态各自单线程独占。
 
+### 1.1 术语
+
+| 术语 | 定义 | 适用范围 |
+| --- | --- | --- |
+| Node | 网络中的实体，**包括本机** | 协议字段、发现、`nodeId` |
+| Peer | 从本机视角看的**对端**节点（`nodeId != localNodeId`） | 连接、会话、流、对端表、回调 |
+| Local | 本机 | `localNodeId`、`localPort` |
+
+口诀：**带「标识 / 报文 / 发现」的用 Node，带「连接 / 会话 / 流 / 表 / 回调」的用 Peer。**
+
+参数命名：
+
+| 名字 | 含义 | 用在哪 |
+| --- | --- | --- |
+| `nodeId` | 任意节点的标识，可能是自己 | 协议字段、`PeerInfo::nodeId`、表键 |
+| `localNodeId` | 本机标识 | 帧头、公告 |
+| `peerNodeId` | 明确指向对端 | `connect` / `openStream` / 会话与流 API |
+
+规则：同一函数签名内不得用 `nodeId` 与 `peerNodeId` 表示同一个值；不新增 `peerId`、`remoteNodeId`。
+
 ## 2. 线程模型
 
 | 线程 | 职责 | 独占资源 |
@@ -172,8 +192,8 @@ classDiagram
         +removeExpired(milliseconds) size_t
     }
 
-    class NodeManager {
-        -NodeConfig config_
+    class PeerDirectory {
+        -DiscoveryConfig config_
         -NodeDiscovery& channel_
         -PeerTable peers_
         -IoLoop& io_
@@ -298,10 +318,10 @@ classDiagram
     Poller *-- WakeupChannel
     Socket <|-- TCPSocket
     Socket <|-- UDPSocket
-    NodeManager *-- PeerTable
-    NodeManager --> NodeDiscovery
-    NodeManager --> IoLoop
-    NodeManager --> TaskLoop
+    PeerDirectory *-- PeerTable
+    PeerDirectory --> NodeDiscovery
+    PeerDirectory --> IoLoop
+    PeerDirectory --> TaskLoop
     NodeDiscovery --> UDPSocket
     NodeDiscovery ..> PeerInfo
     DataChannel --> UDPSocket
@@ -570,7 +590,7 @@ private:
 
 ### 4.3 node 模块
 
-node 模块分为三层：`NodeProtocol` / `NodeDiscovery` 负责协议与组播传输，`NodeManager` 只做节点表与定时，数据通道不属于本模块。
+node 模块分为三层：`DiscoveryProtocol` / `NodeDiscovery` 负责协议与组播传输，`PeerDirectory` 只做节点表与定时，数据通道不属于本模块。
 
 #### PeerInfo [已实现]
 
@@ -582,27 +602,27 @@ struct PeerInfo {
 };
 ```
 
-#### NodeMessage [已实现]
+#### AnnounceMessage [已实现]
 
-编解码放在 `NodeProtocol.h/.cpp`，`NodeDiscovery` 只负责 socket 与回调，不包含报文格式。
+编解码放在 `DiscoveryProtocol.h/.cpp`，`NodeDiscovery` 只负责 socket 与回调，不包含报文格式。
 
 ```cpp
-enum class NodeMessageType : std::uint8_t {
+enum class AnnounceType : std::uint8_t {
     Announce = 1,
     Bye = 2
 };
 
-class NodeMessage final {
+class AnnounceMessage final {
 public:
     static constexpr std::size_t SIZE = 16;   // 固定 16 字节，携带地址
 
-    NodeMessageType type = NodeMessageType::Announce;
+    AnnounceType type = AnnounceType::Announce;
     net::IPAddress address;                   // 发送方可连接地址
     std::uint32_t nodeId = 0;
     std::uint16_t port = 0;
 
     std::string encode() const;
-    static bool decode(const void* data, std::size_t size, NodeMessage& message);
+    static bool decode(const void* data, std::size_t size, AnnounceMessage& message);
 };
 ```
 
@@ -657,10 +677,10 @@ public:
 
 新架构下移除内部 `mutex_`，改由业务线程独占访问。
 
-#### NodeConfig [设计]
+#### DiscoveryConfig [已实现]
 
 ```cpp
-struct NodeConfig {
+struct DiscoveryConfig {
     std::uint32_t nodeId = 0;
 
     // 发现通道
@@ -673,23 +693,23 @@ struct NodeConfig {
 
 数据通道配置（`dataBindAddress`、`dataPort`）归 `P2PServiceConfig`，不再由节点管理器持有。
 
-#### NodeManager [已实现]
+#### PeerDirectory [已实现]
 
 只跑在业务线程；socket 的创建与注册通过 `IoLoop` 完成。
 
 ```cpp
-class NodeManager final {
+class PeerDirectory final {
 public:
     // 发现新节点时的回调，运行在业务线程
     using PeerHandler = std::function<void(const PeerInfo& peer)>;
 
     // channel 生命周期由调用方保证；nodeId 用于过滤自身公告
-    NodeManager(NodeDiscovery& channel, std::uint32_t nodeId, const NodeConfig& config,
+    PeerDirectory(NodeDiscovery& channel, std::uint32_t nodeId, const DiscoveryConfig& config,
                 IoLoop& io, TaskLoop& business);
-    ~NodeManager();
+    ~PeerDirectory();
 
-    NodeManager(const NodeManager&) = delete;
-    NodeManager& operator=(const NodeManager&) = delete;
+    PeerDirectory(const PeerDirectory&) = delete;
+    PeerDirectory& operator=(const PeerDirectory&) = delete;
 
     // 设置发现通道回调并安排定时任务，须在 IoLoop / TaskLoop 启动前调用
     bool start();
@@ -710,7 +730,7 @@ public:
 private:
     void tick();                             // 公告与淘汰，业务线程
 
-    NodeConfig config_;
+    DiscoveryConfig config_;
     NodeDiscovery& channel_;
     PeerTable peers_;
     IoLoop& io_;
@@ -719,11 +739,11 @@ private:
 };
 ```
 
-`NodeManager` 不再创建或持有任何 socket：收到公告由 `NodeDiscovery` 回调推入，发送公告通过 `IoLoop::post` 调用 `channel_.announce()`。
+`PeerDirectory` 不再创建或持有任何 socket：收到公告由 `NodeDiscovery` 回调推入，发送公告通过 `IoLoop::post` 调用 `channel_.announce()`。
 
 ### 4.4 transport 模块 [已实现]
 
-负责连接与流：握手、连接级可靠传输、多路复用、心跳。不依赖 session。协议与类细节见 [peer-protocol.md](peer-protocol.md)，分层依据见 [transport-layer-split.md](transport-layer-split.md)。
+负责连接与流：握手、连接级可靠传输、多路复用、心跳。不依赖业务层。协议与类细节见 [peer-protocol.md](peer-protocol.md)，分层依据见 [transport-layer-split.md](transport-layer-split.md)。
 
 内部按两层拆开，`transport/` 根只做组装：
 
@@ -746,6 +766,12 @@ private:
 
 `P2PService` 通过 `PeerSessionManager` 开流与发数据，组装层通过 `StreamHandler` / `DataHandler` 把事件与数据推回业务层。
 
+
+边界：
+
+- **transport 不承载业务会话**。`PeerSession` 只是「一条连接 + 其上的流」，生命周期与连接绑定；跨连接可恢复的业务上下文（登录态、断点续传、消息序号）由应用层持有，并按业务命名（如 [file-transfer.md](file-transfer.md) 的 `FileTransfer` / `PeerTransfer` / `FileSession`），不要挂进 `PeerSession`。
+- **业务对象不进 transport**：`FileSession` 这类对象只依赖 `P2PService` 的流回调，可以脱离网络单独测试。
+
 ### 4.5 应用层组装
 
 对外只暴露 `P2PService`，内部按依赖顺序组装：
@@ -758,7 +784,7 @@ class P2PService {
 
         std::unique_ptr<DataChannel> channel;
         std::unique_ptr<NodeDiscovery> discovery;
-        std::unique_ptr<NodeManager> node;
+        std::unique_ptr<PeerDirectory> node;
         std::unique_ptr<PeerSessionManager> connections;
     };
 };
@@ -907,7 +933,7 @@ sendData(streamId, data)
 1. IoLoop 构造（唤醒通道就绪）
 2. DataChannel 构造并 open()，绑定数据端口并回填真实端口
 3. NodeDiscovery 构造并 open(dataPort)，绑定组播、注册读事件
-4. NodeManager 构造（注入 NodeDiscovery），start() 设置 receiver 与定时
+4. PeerDirectory 构造（注入 NodeDiscovery），start() 设置 receiver 与定时
 5. PeerSessionManager 构造（注入 DataChannel），start() 接管数据 socket
 6. io.start()
 7. business.start()

@@ -4,7 +4,7 @@
 #include <functional>
 #include <string>
 
-#include "NodeProtocol.h"
+#include "DiscoveryProtocol.h"
 #include "PeerInfo.h"
 #include "core/IoLoop.h"
 #include "net/UDPSocket.h"
@@ -101,7 +101,7 @@ private:
     void handleReadable();
 
     // 构造并组播发送指定类型的报文。
-    bool sendMessage(NodeMessageType type);
+    bool sendMessage(AnnounceType type);
 
     core::IoLoop& io_;
     net::UDPSocket socket_;

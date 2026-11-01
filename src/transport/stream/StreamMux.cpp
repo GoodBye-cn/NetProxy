@@ -8,7 +8,7 @@ namespace netproxy::transport {
 namespace {
 
 // 关闭原因放入 1 字节负载。
-std::string reasonPayload(protocol::Reason reason) {
+std::string reasonPayload(protocol::CloseReason reason) {
     return std::string(1, static_cast<char>(reason));
 }
 
@@ -59,7 +59,7 @@ void StreamMux::onConnectionUp() {
     flushPending();
 }
 
-void StreamMux::onConnectionClosed(protocol::Reason reason) {
+void StreamMux::onConnectionClosed(protocol::CloseReason reason) {
     std::vector<Emit> events;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -68,7 +68,7 @@ void StreamMux::onConnectionClosed(protocol::Reason reason) {
         for (const auto& entry : streams_) {
             const bool queued = isPendingLocked(entry.first);
             events.push_back({entry.first, queued ? protocol::StreamEvent::Rejected : protocol::StreamEvent::Closed,
-                              queued ? protocol::Reason::Timeout : reason});
+                              queued ? protocol::CloseReason::Timeout : reason});
         }
 
         streams_.clear();
@@ -146,13 +146,13 @@ bool StreamMux::closeStream(std::uint32_t streamId) {
     // 排队中的流还没发过 StreamOpen，对端不知道它，不必发 StreamClose。
     if (!queued) {
         protocol::PeerFrame frame = makeStreamFrame(protocol::FrameType::StreamClose, streamId,
-                                          reasonPayload(protocol::Reason::Local));
+                                          reasonPayload(protocol::CloseReason::Local));
         if (sender_) {
             sender_(std::move(frame));
         }
     }
 
-    emitEvent(streamId, protocol::StreamEvent::Closed, protocol::Reason::Local);
+    emitEvent(streamId, protocol::StreamEvent::Closed, protocol::CloseReason::Local);
     return true;
 }
 
@@ -206,7 +206,7 @@ void StreamMux::handleStreamOpen(const protocol::PeerFrame& frame) {
             frames.push_back(makeStreamFrame(protocol::FrameType::StreamAccept, frame.streamId));
         } else if (streams_.size() >= config_.maxStreams) {
             frames.push_back(makeStreamFrame(protocol::FrameType::StreamReject, frame.streamId,
-                                             reasonPayload(protocol::Reason::Error)));
+                                             reasonPayload(protocol::CloseReason::Error)));
         } else {
             Stream stream(frame.streamId, peerNodeId_, false);
             stream.markOpen();
@@ -214,7 +214,7 @@ void StreamMux::handleStreamOpen(const protocol::PeerFrame& frame) {
 
             frames.push_back(makeStreamFrame(protocol::FrameType::StreamAccept, frame.streamId));
             events.push_back(
-                {frame.streamId, protocol::StreamEvent::Opened, static_cast<protocol::Reason>(0)});
+                {frame.streamId, protocol::StreamEvent::Opened, static_cast<protocol::CloseReason>(0)});
         }
     }
 
@@ -232,7 +232,7 @@ void StreamMux::handleStreamAccept(const protocol::PeerFrame& frame) {
         }
 
         entry->second.markOpen();
-        events.push_back({frame.streamId, protocol::StreamEvent::Opened, static_cast<protocol::Reason>(0)});
+        events.push_back({frame.streamId, protocol::StreamEvent::Opened, static_cast<protocol::CloseReason>(0)});
     }
 
     dispatch({}, events);
@@ -248,7 +248,7 @@ void StreamMux::handleStreamReject(const protocol::PeerFrame& frame) {
         removeStreamLocked(frame.streamId);
     }
 
-    emitEvent(frame.streamId, protocol::StreamEvent::Rejected, protocol::Reason::Error);
+    emitEvent(frame.streamId, protocol::StreamEvent::Rejected, protocol::CloseReason::Error);
 }
 
 void StreamMux::handleStreamClose(const protocol::PeerFrame& frame) {
@@ -261,7 +261,7 @@ void StreamMux::handleStreamClose(const protocol::PeerFrame& frame) {
         removeStreamLocked(frame.streamId);
     }
 
-    emitEvent(frame.streamId, protocol::StreamEvent::Closed, protocol::Reason::Remote);
+    emitEvent(frame.streamId, protocol::StreamEvent::Closed, protocol::CloseReason::Remote);
 }
 
 void StreamMux::handleData(const protocol::PeerFrame& frame) {
@@ -296,7 +296,7 @@ bool StreamMux::sendStreamOpen(std::uint32_t streamId) {
         removeStreamLocked(streamId);
     }
 
-    emitEvent(streamId, protocol::StreamEvent::Rejected, protocol::Reason::Error);
+    emitEvent(streamId, protocol::StreamEvent::Rejected, protocol::CloseReason::Error);
     return false;
 }
 
@@ -351,7 +351,7 @@ void StreamMux::dispatch(std::vector<protocol::PeerFrame> frames, const std::vec
     }
 }
 
-void StreamMux::emitEvent(std::uint32_t streamId, protocol::StreamEvent event, protocol::Reason reason) {
+void StreamMux::emitEvent(std::uint32_t streamId, protocol::StreamEvent event, protocol::CloseReason reason) {
     dispatch({}, {Emit{streamId, event, reason}});
 }
 

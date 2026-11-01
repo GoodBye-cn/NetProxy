@@ -16,7 +16,7 @@ std::uint32_t randomNonce() {
 }
 
 // 关闭原因放入 1 字节负载。
-std::string reasonPayload(protocol::Reason reason) {
+std::string reasonPayload(protocol::CloseReason reason) {
     return std::string(1, static_cast<char>(reason));
 }
 
@@ -67,7 +67,7 @@ void PeerConnection::acceptHandshake() {
 
 void PeerConnection::onHelloReject(const HelloMessage& message) {
     (void)message;
-    enterClosed(protocol::Reason::Error);
+    enterClosed(protocol::CloseReason::Error);
 }
 
 void PeerConnection::onFrame(const protocol::PeerFrame& frame) {
@@ -85,7 +85,7 @@ void PeerConnection::onFrame(const protocol::PeerFrame& frame) {
         return; // 纯 ACK 或心跳，不参与有序交付
     }
     if (type == protocol::FrameType::Close) {
-        enterClosed(protocol::Reason::Remote);
+        enterClosed(protocol::CloseReason::Remote);
         return;
     }
 
@@ -100,7 +100,7 @@ void PeerConnection::tick(std::chrono::steady_clock::time_point now) {
         }
 
         if (helloRetries_ >= config_.helloRetryCount) {
-            close(protocol::Reason::Timeout);
+            close(protocol::CloseReason::Timeout);
             return;
         }
 
@@ -113,7 +113,7 @@ void PeerConnection::tick(std::chrono::steady_clock::time_point now) {
             PendingFrame& head = sendQueue_.front();
             if (now - head.sentAt >= std::chrono::milliseconds(config_.retransmitTimeoutMs)) {
                 if (head.retransmitCount >= config_.maxRetransmitCount) {
-                    close(protocol::Reason::Error);
+                    close(protocol::CloseReason::Error);
                     return;
                 }
 
@@ -127,7 +127,7 @@ void PeerConnection::tick(std::chrono::steady_clock::time_point now) {
 
         if (now - lastActive_ >= std::chrono::milliseconds(config_.pingIntervalMs)) {
             if (pingMisses_ >= config_.pingRetryCount) {
-                close(protocol::Reason::Timeout);
+                close(protocol::CloseReason::Timeout);
                 return;
             }
 
@@ -142,7 +142,7 @@ void PeerConnection::tick(std::chrono::steady_clock::time_point now) {
         // 流表在流层：只有「没有活跃流」且空闲超时才关闭连接。
         const bool hasActiveStreams = hasStreams_ ? hasStreams_() : false;
         if (!hasActiveStreams && now - lastActive_ >= std::chrono::milliseconds(config_.idleTimeoutMs)) {
-            sendControl(protocol::FrameType::Close, reasonPayload(protocol::Reason::Local));
+            sendControl(protocol::FrameType::Close, reasonPayload(protocol::CloseReason::Local));
             state_ = ConnectionState::Closing;
             closingSince_ = now;
         }
@@ -150,7 +150,7 @@ void PeerConnection::tick(std::chrono::steady_clock::time_point now) {
     }
     case ConnectionState::Closing: {
         if (now - closingSince_ >= std::chrono::milliseconds(config_.closeTimeoutMs)) {
-            enterClosed(protocol::Reason::Timeout);
+            enterClosed(protocol::CloseReason::Timeout);
         }
         return;
     }
@@ -172,7 +172,7 @@ bool PeerConnection::send(protocol::PeerFrame frame) {
     return true;
 }
 
-void PeerConnection::close(protocol::Reason reason) {
+void PeerConnection::close(protocol::CloseReason reason) {
     if (state_ == ConnectionState::Closed) {
         return;
     }
@@ -349,7 +349,7 @@ void PeerConnection::sendControl(protocol::FrameType type, const std::string& pa
     }
 }
 
-void PeerConnection::enterClosed(protocol::Reason reason) {
+void PeerConnection::enterClosed(protocol::CloseReason reason) {
     if (state_ == ConnectionState::Closed) {
         return;
     }

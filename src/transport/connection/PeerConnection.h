@@ -64,7 +64,7 @@ public:
     using FrameHandler = std::function<void(const protocol::PeerFrame&)>;
 
     // 连接进入 Closed 时触发，保证只触发一次。
-    using CloseHandler = std::function<void(protocol::Reason)>;
+    using CloseHandler = std::function<void(protocol::CloseReason)>;
 
     // 查询「流表是否为空」，用于空闲关闭；由流层提供。
     using HasStreams = std::function<bool()>;
@@ -169,7 +169,7 @@ public:
      *
      * @param reason 关闭原因，透传给上层。
      */
-    void close(protocol::Reason reason);
+    void close(protocol::CloseReason reason);
 
     // 是否处于 Connected。
     bool isConnected() const;
@@ -231,7 +231,7 @@ private:
     void sendHello();
 
     // 进入 Closed 的唯一出口：清队列、置状态、触发 CloseHandler。
-    void enterClosed(protocol::Reason reason);
+    void enterClosed(protocol::CloseReason reason);
 
     // 连接标识与对端信息
     std::uint32_t peerNodeId_ = 0;  // 对端节点标识

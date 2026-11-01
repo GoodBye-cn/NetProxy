@@ -9,7 +9,7 @@
 namespace {
 
 using netproxy::protocol::FrameType;
-using netproxy::protocol::Reason;
+using netproxy::protocol::CloseReason;
 using netproxy::protocol::StreamEvent;
 using netproxy::protocol::PeerFrame;
 using netproxy::transport::StreamConfig;
@@ -64,11 +64,11 @@ PeerFrame dataFrame(std::uint32_t streamId, const std::string& payload) {
 // 记录流事件的辅助。
 struct Events {
     std::vector<StreamEvent> types;
-    std::vector<Reason> reasons;
+    std::vector<CloseReason> reasons;
     std::uint32_t lastStreamId = 0;
 
     StreamMux::StreamHandler handler() {
-        return [this](std::uint32_t streamId, std::uint32_t, StreamEvent event, Reason reason) {
+        return [this](std::uint32_t streamId, std::uint32_t, StreamEvent event, CloseReason reason) {
             lastStreamId = streamId;
             types.push_back(event);
             reasons.push_back(reason);
@@ -185,7 +185,7 @@ void remoteCloseRemovesStream() {
 
     test::checkFalse(mux.ownsStream(4), "对端关闭: 流已删除");
     test::checkTrue(!events.types.empty() && events.types.back() == StreamEvent::Closed, "对端关闭: 事件为 Closed");
-    test::checkTrue(!events.reasons.empty() && events.reasons.back() == Reason::Remote, "对端关闭: 原因为 Remote");
+    test::checkTrue(!events.reasons.empty() && events.reasons.back() == CloseReason::Remote, "对端关闭: 原因为 Remote");
 }
 
 void localCloseSendsFrame() {
@@ -200,7 +200,7 @@ void localCloseSendsFrame() {
 
     test::checkTrue(mux.closeStream(5), "本地关闭: 成功");
     test::checkEquals(static_cast<int>(capture.count(FrameType::StreamClose)), 1, "本地关闭: 发出 StreamClose");
-    test::checkTrue(!events.types.empty() && events.reasons.back() == Reason::Local, "本地关闭: 原因为 Local");
+    test::checkTrue(!events.types.empty() && events.reasons.back() == CloseReason::Local, "本地关闭: 原因为 Local");
     test::checkFalse(mux.closeStream(5), "本地关闭: 重复关闭失败");
 }
 
@@ -211,11 +211,11 @@ void pendingStreamRejectedOnClose() {
     mux.setStreamHandler(events.handler());
 
     mux.openStream(6);
-    mux.onConnectionClosed(Reason::Timeout);
+    mux.onConnectionClosed(CloseReason::Timeout);
 
     test::checkFalse(mux.ownsStream(6), "断连: 排队流被清理");
     test::checkTrue(!events.types.empty() && events.types.back() == StreamEvent::Rejected, "断连: 排队流为 Rejected");
-    test::checkTrue(!events.reasons.empty() && events.reasons.back() == Reason::Timeout, "断连: 排队流原因为 Timeout");
+    test::checkTrue(!events.reasons.empty() && events.reasons.back() == CloseReason::Timeout, "断连: 排队流原因为 Timeout");
 }
 
 void openStreamClosedOnConnectionLoss() {
@@ -228,10 +228,10 @@ void openStreamClosedOnConnectionLoss() {
     mux.onConnectionUp();
     mux.onFrame(streamFrame(FrameType::StreamAccept, 7));
 
-    mux.onConnectionClosed(Reason::Remote);
+    mux.onConnectionClosed(CloseReason::Remote);
 
     test::checkTrue(!events.types.empty() && events.types.back() == StreamEvent::Closed, "断连: 已开流为 Closed");
-    test::checkTrue(!events.reasons.empty() && events.reasons.back() == Reason::Remote, "断连: 已开流原因透传");
+    test::checkTrue(!events.reasons.empty() && events.reasons.back() == CloseReason::Remote, "断连: 已开流原因透传");
     test::checkEquals(static_cast<int>(mux.streams().size()), 0, "断连: 流表清空");
     test::checkFalse(mux.hasStreams(), "断连: 无活跃流");
 }

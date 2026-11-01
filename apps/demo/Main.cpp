@@ -124,13 +124,13 @@ void handleCommand(netproxy::P2PService& service, const std::string& line) {
     }
 
     if (command == "streams") {
-        const std::vector<netproxy::StreamInfo> sessions = service.streams();
-        if (sessions.empty()) {
+        const std::vector<netproxy::StreamInfo> streams = service.streams();
+        if (streams.empty()) {
             netproxy::Log::info("当前没有流");
             return;
         }
 
-        for (const netproxy::StreamInfo& info : sessions) {
+        for (const netproxy::StreamInfo& info : streams) {
             netproxy::Log::info("流 streamId=", info.streamId, " 对端=", info.peerNodeId,
                                 info.open ? " 已建立" : " 握手中");
         }

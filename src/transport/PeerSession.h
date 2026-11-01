@@ -51,7 +51,7 @@ public:
     void onHelloReject(const HelloMessage& message);
     void onFrame(const protocol::PeerFrame& frame);
     void tick(std::chrono::steady_clock::time_point now);
-    void close(protocol::Reason reason);
+    void close(protocol::CloseReason reason);
 
     // 流层转发。
     bool openStream(std::uint32_t streamId);

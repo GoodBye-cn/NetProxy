@@ -1,4 +1,4 @@
-#include "NodeProtocol.h"
+#include "DiscoveryProtocol.h"
 
 #include <cstring>
 
@@ -32,7 +32,7 @@ net::IPAddress toAddress(std::uint32_t value) {
 
 } // namespace
 
-std::string NodeMessage::encode() const {
+std::string AnnounceMessage::encode() const {
     std::string buffer(SIZE, '\0');
     auto* bytes = reinterpret_cast<unsigned char*>(&buffer[0]);
 
@@ -53,7 +53,7 @@ std::string NodeMessage::encode() const {
     return buffer;
 }
 
-bool NodeMessage::decode(const void* data, std::size_t size, NodeMessage& message) {
+bool AnnounceMessage::decode(const void* data, std::size_t size, AnnounceMessage& message) {
     if (data == nullptr || size < SIZE) {
         return false;
     }
@@ -71,8 +71,8 @@ bool NodeMessage::decode(const void* data, std::size_t size, NodeMessage& messag
     }
 
     const std::uint8_t rawType = bytes[5];
-    if (rawType != static_cast<std::uint8_t>(NodeMessageType::Announce) &&
-        rawType != static_cast<std::uint8_t>(NodeMessageType::Bye)) {
+    if (rawType != static_cast<std::uint8_t>(AnnounceType::Announce) &&
+        rawType != static_cast<std::uint8_t>(AnnounceType::Bye)) {
         return false;
     }
 
@@ -89,7 +89,7 @@ bool NodeMessage::decode(const void* data, std::size_t size, NodeMessage& messag
     std::uint32_t networkNodeId = 0;
     std::memcpy(&networkNodeId, bytes + 12, 4);
 
-    message.type = static_cast<NodeMessageType>(rawType);
+    message.type = static_cast<AnnounceType>(rawType);
     message.address = toAddress(networkAddress);
     message.port = decodedPort;
     message.nodeId = ntohl(networkNodeId);

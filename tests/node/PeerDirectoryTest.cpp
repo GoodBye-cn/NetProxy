@@ -7,15 +7,15 @@
 #include "core/IoLoop.h"
 #include "core/TaskLoop.h"
 #include "node/NodeDiscovery.h"
-#include "node/NodeManager.h"
+#include "node/PeerDirectory.h"
 
 namespace {
 
 using netproxy::core::IoLoop;
 using netproxy::core::TaskLoop;
-using netproxy::node::NodeConfig;
+using netproxy::node::DiscoveryConfig;
 using netproxy::node::NodeDiscovery;
-using netproxy::node::NodeManager;
+using netproxy::node::PeerDirectory;
 using netproxy::node::PeerInfo;
 
 // 单个节点的发现通道与管理器。
@@ -24,9 +24,9 @@ struct NodeRuntime final {
     IoLoop io;
     TaskLoop business;
     NodeDiscovery discovery;
-    NodeManager manager;
+    PeerDirectory manager;
 
-    NodeRuntime(std::uint32_t nodeId, std::uint16_t listenPort, const NodeConfig& config)
+    NodeRuntime(std::uint32_t nodeId, std::uint16_t listenPort, const DiscoveryConfig& config)
         : port(listenPort), discovery(io, nodeId, "", 0), manager(discovery, nodeId, config, io, business) {}
 
     NodeRuntime(const NodeRuntime&) = delete;
@@ -45,7 +45,7 @@ struct NodeRuntime final {
 };
 
 void twoNodesDiscover() {
-    NodeConfig config;
+    DiscoveryConfig config;
     config.announceIntervalMs = 100;
     config.peerTimeoutMs = 2000;
 
@@ -75,11 +75,11 @@ void twoNodesDiscover() {
 }
 
 void peerExpires() {
-    NodeConfig configA;
+    DiscoveryConfig configA;
     configA.announceIntervalMs = 100;
     configA.peerTimeoutMs = 2000;
 
-    NodeConfig configB;
+    DiscoveryConfig configB;
     configB.announceIntervalMs = 100;
     configB.peerTimeoutMs = 400;
 
@@ -111,7 +111,7 @@ void peerExpires() {
 }
 
 void queryInterface() {
-    NodeConfig config;
+    DiscoveryConfig config;
     NodeRuntime runtime(0x55556666, 9200, config);
 
     test::checkEquals(static_cast<int>(runtime.manager.nodeId()), 0x55556666, "节点: nodeId 访问器");

@@ -13,7 +13,7 @@ namespace {
 using netproxy::net::IPAddress;
 using netproxy::protocol::FrameType;
 using netproxy::protocol::HelloType;
-using netproxy::protocol::Reason;
+using netproxy::protocol::CloseReason;
 using netproxy::transport::ConnectionState;
 using netproxy::transport::HelloMessage;
 using netproxy::transport::PeerConfig;
@@ -128,7 +128,7 @@ void helloRejectCloses() {
     PeerConnection connection(0x22, 0x11, IPAddress::parse("127.0.0.1", 9000), fastConfig(), capture.sender());
 
     std::atomic<int> closed{0};
-    connection.setCloseHandler([&closed](Reason) { closed.fetch_add(1); });
+    connection.setCloseHandler([&closed](CloseReason) { closed.fetch_add(1); });
 
     connection.open();
 
@@ -261,10 +261,10 @@ void closeHandlerFiresOnce() {
     completeHandshake(capture, connection);
 
     std::atomic<int> closed{0};
-    connection.setCloseHandler([&closed](Reason) { closed.fetch_add(1); });
+    connection.setCloseHandler([&closed](CloseReason) { closed.fetch_add(1); });
 
-    connection.close(Reason::Local);
-    connection.close(Reason::Local);
+    connection.close(CloseReason::Local);
+    connection.close(CloseReason::Local);
 
     test::checkTrue(connection.state() == ConnectionState::Closed, "关闭: 状态为 Closed");
     test::checkEquals(closed.load(), 1, "关闭: CloseHandler 只触发一次");
@@ -295,8 +295,8 @@ void remoteCloseNotifiesHandler() {
     completeHandshake(capture, connection);
 
     std::atomic<int> closed{0};
-    Reason observed = Reason::Local;
-    connection.setCloseHandler([&closed, &observed](Reason reason) {
+    CloseReason observed = CloseReason::Local;
+    connection.setCloseHandler([&closed, &observed](CloseReason reason) {
         observed = reason;
         closed.fetch_add(1);
     });
@@ -304,12 +304,12 @@ void remoteCloseNotifiesHandler() {
     PeerFrame closeFrame;
     closeFrame.type = static_cast<std::uint8_t>(FrameType::Close);
     closeFrame.nodeId = 0x22;
-    closeFrame.payload = std::string(1, static_cast<char>(Reason::Remote));
+    closeFrame.payload = std::string(1, static_cast<char>(CloseReason::Remote));
     connection.onFrame(closeFrame);
 
     test::checkTrue(connection.state() == ConnectionState::Closed, "远端关闭: 状态为 Closed");
     test::checkEquals(closed.load(), 1, "远端关闭: 回调一次");
-    test::checkTrue(observed == Reason::Remote, "远端关闭: 原因为 Remote");
+    test::checkTrue(observed == CloseReason::Remote, "远端关闭: 原因为 Remote");
 }
 
 } // namespace

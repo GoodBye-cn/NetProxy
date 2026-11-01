@@ -5,7 +5,7 @@
 #include "core/TaskLoop.h"
 #include "net/Socket.h"
 #include "node/NodeDiscovery.h"
-#include "node/NodeManager.h"
+#include "node/PeerDirectory.h"
 #include "protocol/Protocol.h"
 #include "transport/DataChannel.h"
 #include "transport/PeerSessionManager.h"
@@ -48,7 +48,7 @@ struct P2PService::Impl {
     mutable std::mutex nodeMutex;
     std::unique_ptr<transport::DataChannel> channel;
     std::unique_ptr<node::NodeDiscovery> discovery;
-    std::unique_ptr<node::NodeManager> node;
+    std::unique_ptr<node::PeerDirectory> node;
     std::unique_ptr<transport::PeerSessionManager> connections;
 
     std::mutex handlerMutex;
@@ -88,7 +88,7 @@ bool P2PService::start(const P2PServiceConfig& config) {
 
     const std::uint32_t nodeId = config.nodeId == 0 ? randomNodeId() : config.nodeId;
 
-    node::NodeConfig nodeConfig;
+    node::DiscoveryConfig nodeConfig;
     nodeConfig.announceIntervalMs = config.announceIntervalMs;
     nodeConfig.peerTimeoutMs = config.peerTimeoutMs;
 
@@ -127,7 +127,7 @@ bool P2PService::start(const P2PServiceConfig& config) {
 
     // 3. 节点管理器只订阅公告
     impl_->node =
-        std::make_unique<node::NodeManager>(*impl_->discovery, nodeId, nodeConfig, impl_->io, impl_->business);
+        std::make_unique<node::PeerDirectory>(*impl_->discovery, nodeId, nodeConfig, impl_->io, impl_->business);
     impl_->installPeerHandler();
 
     if (!impl_->node->start()) {
@@ -143,7 +143,7 @@ bool P2PService::start(const P2PServiceConfig& config) {
 
     Impl* impl = impl_.get();
     impl_->connections->setStreamHandler(
-        [impl](std::uint32_t streamId, std::uint32_t peerNodeId, protocol::StreamEvent event, protocol::Reason reason) {
+        [impl](std::uint32_t streamId, std::uint32_t peerNodeId, protocol::StreamEvent event, protocol::CloseReason reason) {
             StreamHandler target;
             {
                 std::lock_guard<std::mutex> lock(impl->handlerMutex);
@@ -259,12 +259,12 @@ std::vector<PeerInfo> P2PService::peers() const {
     return impl_->node->peers();
 }
 
-bool P2PService::findPeer(std::uint32_t nodeId, PeerInfo& peer) const {
+bool P2PService::findPeer(std::uint32_t peerNodeId, PeerInfo& peer) const {
     std::lock_guard<std::mutex> nodeLock(impl_->nodeMutex);
     if (!impl_->node) {
         return false;
     }
-    return impl_->node->findPeer(nodeId, peer);
+    return impl_->node->findPeer(peerNodeId, peer);
 }
 
 void P2PService::setPeerHandler(PeerHandler handler) {

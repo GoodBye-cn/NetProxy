@@ -1,7 +1,7 @@
 #include "NodeDiscovery.h"
 
 #include "Log.h"
-#include "NodeProtocol.h"
+#include "DiscoveryProtocol.h"
 
 #include <utility>
 
@@ -88,11 +88,11 @@ bool NodeDiscovery::isOpen() const {
 }
 
 bool NodeDiscovery::announce() {
-    return sendMessage(NodeMessageType::Announce);
+    return sendMessage(AnnounceType::Announce);
 }
 
 bool NodeDiscovery::sendBye() {
-    return sendMessage(NodeMessageType::Bye);
+    return sendMessage(AnnounceType::Bye);
 }
 
 bool NodeDiscovery::setReceiver(Receiver receiver) {
@@ -119,19 +119,19 @@ std::uint16_t NodeDiscovery::announcePort() const {
     return announcePort_;
 }
 
-bool NodeDiscovery::sendMessage(NodeMessageType type) {
+bool NodeDiscovery::sendMessage(AnnounceType type) {
     if (!opened_) {
         Log::warning("节点发现发送失败: 通道未打开");
         return false;
     }
 
-    NodeMessage message;
+    AnnounceMessage message;
     message.type = type;
     message.nodeId = nodeId_;
     message.port = announcePort_;
 
     if (socket_.sendTo(message.encode(), multicastAddress_) <= 0) {
-        Log::warning("节点发现发送失败: ", type == NodeMessageType::Announce ? "Announce" : "Bye");
+        Log::warning("节点发现发送失败: ", type == AnnounceType::Announce ? "Announce" : "Bye");
         return false;
     }
     return true;
@@ -146,8 +146,8 @@ void NodeDiscovery::handleReadable() {
             break;
         }
 
-        NodeMessage message;
-        if (!NodeMessage::decode(buffer, static_cast<std::size_t>(received), message)) {
+        AnnounceMessage message;
+        if (!AnnounceMessage::decode(buffer, static_cast<std::size_t>(received), message)) {
             continue;
         }
 

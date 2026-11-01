@@ -277,7 +277,7 @@ bool decodeFrame(const void* data, std::size_t size, PeerFrame& frame);
 ```cpp
 using Sender = std::function<void(const std::string& packet, const net::IPAddress& target)>;
 using FrameHandler = std::function<void(const PeerFrame&)>;    // 有序交付
-using CloseHandler = std::function<void(Reason reason)>;       // 进入 Closed 时触发一次
+using CloseHandler = std::function<void(CloseReason reason)>;       // 进入 Closed 时触发一次
 using HasStreams = std::function<bool()>;                // 空闲关闭判定
 
 PeerConnection(std::uint32_t peerNodeId, std::uint32_t localNodeId, const net::IPAddress& peer,
@@ -293,7 +293,7 @@ bool send(PeerFrame frame);                    // 可靠有序发送；未连接
 bool isConnected() const;
 ConnectionState state() const;
 std::uint32_t peerNodeId() const;
-void close(Reason reason);
+void close(CloseReason reason);
 ```
 
 **内部方法**：
@@ -305,7 +305,7 @@ void close(Reason reason);
 | `receiveFrame(const PeerFrame&)` | 按 `connectionSeq` 去重、缓存、按序交付 |
 | `deliverOrdered(const PeerFrame&)` | 把帧交给 `FrameHandler` |
 | `sendControl(FrameType, payload)` | 发送 `Ping` / `Close` 控制帧 |
-| `enterClosed(Reason)` | 唯一的关闭出口：置状态并触发 `CloseHandler` |
+| `enterClosed(CloseReason)` | 唯一的关闭出口：置状态并触发 `CloseHandler` |
 | `sendAck()` | 回纯 ACK |
 
 **不做的事**：不读 socket、不建 socket、不判断节点是否在 `PeerTable`、不维护流表。
@@ -318,7 +318,7 @@ void close(Reason reason);
 
 ```cpp
 using StreamHandler = std::function<void(std::uint32_t streamId, std::uint32_t peerNodeId,
-                                         StreamEvent event, Reason reason)>;
+                                         StreamEvent event, CloseReason reason)>;
 using DataHandler = std::function<void(std::uint32_t streamId, std::uint32_t peerNodeId,
                                        const char* data, std::size_t size)>;
 using FrameSender = std::function<bool(PeerFrame frame)>;   // 注入连接层可靠发送
@@ -327,7 +327,7 @@ StreamMux(std::uint32_t peerNodeId, const StreamConfig& config, FrameSender send
 
 void onFrame(const PeerFrame& frame);                 // 只处理 Data / Stream*
 void onConnectionUp();                                // 补发排队开流
-void onConnectionClosed(Reason reason);               // 已开流 Closed、排队流 Rejected(Timeout)
+void onConnectionClosed(CloseReason reason);               // 已开流 Closed、排队流 Rejected(Timeout)
 
 bool openStream(std::uint32_t streamId);              // 流号由调用线程生成
 bool sendData(std::uint32_t streamId, const void* data, std::size_t size);
@@ -366,7 +366,7 @@ void acceptHandshake();   // 内部：状态变为 Connected 后调 streams_.onC
 void onHelloAck(const HelloMessage& message);
 void onFrame(const PeerFrame& frame);
 void tick(std::chrono::steady_clock::time_point now);
-void close(Reason reason);
+void close(CloseReason reason);
 
 bool openStream(std::uint32_t streamId);
 bool sendData(std::uint32_t streamId, const void* data, std::size_t size);
@@ -398,7 +398,7 @@ std::vector<StreamRecord> streams() const;
 
 ```cpp
 using StreamHandler = std::function<void(std::uint32_t streamId, std::uint32_t peerNodeId,
-                                         StreamEvent event, Reason reason)>;
+                                         StreamEvent event, CloseReason reason)>;
 using DataHandler = std::function<void(std::uint32_t streamId, std::uint32_t peerNodeId,
                                        const char* data, std::size_t size)>;
 
@@ -476,7 +476,7 @@ private:
 | `business` | `core::TaskLoop` |
 | `channel` | `unique_ptr<transport::DataChannel>` |
 | `discovery` | `unique_ptr<node::NodeDiscovery>` |
-| `node` | `unique_ptr<node::NodeManager>` |
+| `node` | `unique_ptr<node::PeerDirectory>` |
 | `connections` | `unique_ptr<transport::PeerSessionManager>` |
 | `handler` | `PeerHandler` |
 | `streamHandler` | `StreamHandler` |

@@ -92,7 +92,7 @@ std::uint32_t PeerSessionManager::openStream(std::uint32_t peerNodeId, const net
     business_.post([this, peerNodeId, peer, streamId] {
         auto session = ensureSession(peerNodeId, peer);
         if (!session->openStream(streamId)) {
-            emitStreamEvent(streamId, peerNodeId, protocol::StreamEvent::Rejected, protocol::Reason::Error);
+            emitStreamEvent(streamId, peerNodeId, protocol::StreamEvent::Rejected, protocol::CloseReason::Error);
         }
 
         if (!session->isConnected()) {
@@ -301,7 +301,7 @@ std::shared_ptr<PeerSession> PeerSessionManager::ensureSession(std::uint32_t pee
 
     // 事件转发不带会话指针：流层保证回调在锁外触发。
     session->setStreamHandler([this, peerNodeId](std::uint32_t streamId, std::uint32_t, protocol::StreamEvent event,
-                                                 protocol::Reason reason) {
+                                                 protocol::CloseReason reason) {
         emitStreamEvent(streamId, peerNodeId, event, reason);
     });
 
@@ -343,7 +343,7 @@ std::vector<std::shared_ptr<PeerSession>> PeerSessionManager::snapshotSessions()
 }
 
 void PeerSessionManager::emitStreamEvent(std::uint32_t streamId, std::uint32_t peerNodeId,
-                                            protocol::StreamEvent event, protocol::Reason reason) {
+                                            protocol::StreamEvent event, protocol::CloseReason reason) {
     StreamMux::StreamHandler handler;
     {
         std::lock_guard<std::mutex> lock(sessionsMutex_);

@@ -36,7 +36,7 @@ class StreamMux final {
 public:
     // 流事件：附带对端标识后转发给组装层。
     using StreamHandler = std::function<void(std::uint32_t streamId, std::uint32_t peerNodeId,
-                                             protocol::StreamEvent event, protocol::Reason reason)>;
+                                             protocol::StreamEvent event, protocol::CloseReason reason)>;
 
     // 数据交付。
     using DataHandler =
@@ -58,7 +58,7 @@ public:
     // 连接层驱动的入口（业务线程）。
     void onFrame(const protocol::PeerFrame& frame);             // 只处理 Data / Stream*
     void onConnectionUp();                            // 握手完成：补发排队开流
-    void onConnectionClosed(protocol::Reason reason); // 已开流 Closed、排队流 Rejected
+    void onConnectionClosed(protocol::CloseReason reason); // 已开流 Closed、排队流 Rejected
 
     // 上层 API（业务线程）。
     // 流号由调用线程生成后传入，Mux 只负责建流与排队。
@@ -80,7 +80,7 @@ private:
     struct Emit {
         std::uint32_t streamId = 0;
         protocol::StreamEvent event = protocol::StreamEvent::Opened;
-        protocol::Reason reason = static_cast<protocol::Reason>(0);
+        protocol::CloseReason reason = static_cast<protocol::CloseReason>(0);
     };
 
     void handleStreamOpen(const protocol::PeerFrame& frame);
@@ -101,7 +101,7 @@ private:
 
     // 锁外执行：先发帧，再回调事件。
     void dispatch(std::vector<protocol::PeerFrame> frames, const std::vector<Emit>& events);
-    void emitEvent(std::uint32_t streamId, protocol::StreamEvent event, protocol::Reason reason);
+    void emitEvent(std::uint32_t streamId, protocol::StreamEvent event, protocol::CloseReason reason);
 
     std::uint32_t peerNodeId_ = 0;
     StreamConfig config_;

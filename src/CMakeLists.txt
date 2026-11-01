@@ -45,8 +45,8 @@ add_library(netproxy
     net/UDPSocket.cpp
     net/WakeupChannel.cpp
     node/NodeDiscovery.cpp
-    node/NodeManager.cpp
-    node/NodeProtocol.cpp
+    node/PeerDirectory.cpp
+    node/DiscoveryProtocol.cpp
     node/PeerTable.cpp
     transport/DataChannel.cpp
     transport/PeerSession.cpp

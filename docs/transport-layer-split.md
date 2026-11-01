@@ -51,7 +51,7 @@
 ```
 src/
 ├── protocol/
-│   ├── Protocol.h              # 不变：FrameType / StreamEvent / Reason
+│   ├── Protocol.h              # 不变：FrameType / StreamEvent / CloseReason
 │   └── Frame.h                 # 新增：PeerFrame（从 transport/PeerProtocol.h 移入）
 │
 ├── transport/
@@ -99,7 +99,7 @@ tests/transport/
 
 ```
                  protocol/Protocol.h + protocol/Frame.h
-                  （FrameType / StreamEvent / Reason / PeerFrame）
+                  （FrameType / StreamEvent / CloseReason / PeerFrame）
                         ▲                          ▲
                         │                          │
         ┌───────────────┘                          └───────────────┐
@@ -455,7 +455,7 @@ class PeerConnection final {
 public:
     using Sender = PacketSender;
     using FrameHandler = std::function<void(const PeerFrame&)>;          // 有序交付
-    using CloseHandler = std::function<void(protocol::Reason)>;          // 连接进入 Closed
+    using CloseHandler = std::function<void(protocol::CloseReason)>;          // 连接进入 Closed
     using HasStreams = std::function<bool()>;                      // 由流层提供，用于空闲关闭
 
     PeerConnection(std::uint32_t peerNodeId, std::uint32_t localNodeId, const net::IPAddress& peer,
@@ -477,7 +477,7 @@ public:
     // 状态不是 Connected、或 payload 超过 maxPayloadSize 时返回 false（长度校验在连接层兜底）。
     bool send(PeerFrame frame);
     void tick(std::chrono::steady_clock::time_point now);
-    void close(protocol::Reason reason);
+    void close(protocol::CloseReason reason);
 
     // 回调
     void setFrameHandler(FrameHandler handler);
@@ -506,7 +506,7 @@ private:
     void sendAck();
     void sendControl(protocol::FrameType type, const std::string& payload);
     std::uint16_t windowRemaining() const;
-    void enterClosed(protocol::Reason reason);     // 状态置 Closed + CloseHandler
+    void enterClosed(protocol::CloseReason reason);     // 状态置 Closed + CloseHandler
 
     // 成员：peerNodeId_、localNodeId_、peer_、config_、sender_、hasStreams_、state_、
     //       handshakeStarted_、helloNonce_、helloRetries_、helloSentAt_、sendNext_、sendBase_、
@@ -554,7 +554,7 @@ enum class StreamState : std::uint8_t {
 class Stream final {
 public:
     using EventCallback = std::function<void(std::uint32_t streamId, protocol::StreamEvent event,
-                                             protocol::Reason reason)>;
+                                             protocol::CloseReason reason)>;
     using DataCallback = std::function<void(std::uint32_t streamId, const char* data, std::size_t size)>;
 
     Stream(std::uint32_t streamId, std::uint32_t peerNodeId, bool locallyInitiated);
@@ -570,7 +570,7 @@ public:
 
     bool markOpen();                                  // Opening -> Open；返回状态是否变化
     void deliverData(const char* data, std::size_t size);
-    void close(protocol::StreamEvent event, protocol::Reason reason); // -> Closed 并回调
+    void close(protocol::StreamEvent event, protocol::CloseReason reason); // -> Closed 并回调
 
 private:
     std::uint32_t streamId_ = 0;
@@ -600,7 +600,7 @@ namespace netproxy::transport {
 class StreamMux final {
 public:
     using StreamHandler = std::function<void(std::uint32_t streamId, std::uint32_t peerNodeId,
-                                             protocol::StreamEvent event, protocol::Reason reason)>;
+                                             protocol::StreamEvent event, protocol::CloseReason reason)>;
     using DataHandler = std::function<void(std::uint32_t streamId, std::uint32_t peerNodeId,
                                            const char* data, std::size_t size)>;
     using FrameSender = std::function<bool(PeerFrame)>;   // 注入连接层可靠发送
@@ -610,7 +610,7 @@ public:
     // 连接层驱动的入口（业务线程）
     void onFrame(const PeerFrame& frame);                 // 只处理 Data / Stream*
     void onConnectionUp();                                // 握手完成：补发排队开流
-    void onConnectionClosed(protocol::Reason reason);     // 已开流 Closed、排队流 Rejected
+    void onConnectionClosed(protocol::CloseReason reason);     // 已开流 Closed、排队流 Rejected
 
     // 上层 API（业务线程）
     // 流号由调用线程生成后传入（见 9.1），Mux 不做分配，只负责建流与排队。
@@ -729,7 +729,7 @@ public:
     void onHelloReject(const HelloMessage& message);
     void onFrame(const PeerFrame& frame);
     void tick(std::chrono::steady_clock::time_point now);
-    void close(protocol::Reason reason);
+    void close(protocol::CloseReason reason);
 
     // 流层转发
     bool openStream(std::uint32_t streamId);              // 流号由 manager 在调用线程生成
@@ -749,7 +749,7 @@ public:
     ConnectionState state() const;      // 仅业务线程
 
 private:
-    void onConnectionClosed(protocol::Reason reason);
+    void onConnectionClosed(protocol::CloseReason reason);
 
     PeerConnection connection_;
     StreamMux streams_;
@@ -772,7 +772,7 @@ PeerSession::PeerSession(...)
       streams_(peerNodeId, streamConfig,
                [this](PeerFrame frame) { return connection_.send(std::move(frame)); }) {
     connection_.setFrameHandler([this](const PeerFrame& frame) { streams_.onFrame(frame); });
-    connection_.setCloseHandler([this](protocol::Reason reason) { onConnectionClosed(reason); });
+    connection_.setCloseHandler([this](protocol::CloseReason reason) { onConnectionClosed(reason); });
 }
 ```
 
@@ -857,7 +857,7 @@ std::uint32_t PeerSessionManager::openStream(std::uint32_t peerNodeId, const net
     business_.post([this, peerNodeId, peer, streamId] {
         auto session = ensureSession(peerNodeId, peer);
         if (!session->openStream(streamId)) {
-            emitStreamEvent(streamId, peerNodeId, protocol::StreamEvent::Rejected, protocol::Reason::Error);
+            emitStreamEvent(streamId, peerNodeId, protocol::StreamEvent::Rejected, protocol::CloseReason::Error);
         }
     });
 

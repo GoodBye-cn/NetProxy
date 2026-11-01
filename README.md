@@ -43,7 +43,7 @@ C++17 网络代理项目，使用 CMake 构建。Linux 使用 Clang，Windows �
 git config commit.template .gitmessage
 ```
 
-- 首行 `<area>: <summary>`，`area` 取 `net` / `core` / `node` / `session` / `apps` / `tests` / `cmake` / `docs`
+- 首行 `<area>: <summary>`，`area` 取 `net` / `core` / `node` / `transport` / `apps` / `tests` / `cmake` / `docs`
 - 首行 50 字内、祈使句、结尾不加句号
 - 正文每行不超过 72 列，说明为什么改；无正文可只保留首行
 - 尾部用 `Closes #<issue>` 关联问题，不兼容变更写 `BREAKING CHANGE:`
@@ -115,7 +115,7 @@ discovery.announce();                     // 周期调用，建议 3 秒一次
 
 - 组播地址默认 `239.255.42.99:45454`，TTL 1，只在本网段传播
 - 报文固定 16 字节：magic + version + type + address + port + nodeId
-- 不持有定时器，也不写节点表；公告周期与状态管理由 `NodeManager` 负责
+- 不持有定时器，也不写节点表；公告周期与状态管理由 `PeerDirectory` 负责
 
 ## P2P 服务
 
@@ -185,13 +185,13 @@ service.stop();
 
 ## 节点管理器
 
-`src/node/NodeManager` 运行在业务线程，维护 `PeerTable`、驱动周期公告与过期淘汰。socket 由 `NodeDiscovery` 持有，节点管理器不再自己创建。
+`src/node/PeerDirectory` 运行在业务线程，维护 `PeerTable`、驱动周期公告与过期淘汰。socket 由 `NodeDiscovery` 持有，节点管理器不再自己创建。
 
 ```cpp
 #include "core/IoLoop.h"
 #include "core/TaskLoop.h"
 #include "node/NodeDiscovery.h"
-#include "node/NodeManager.h"
+#include "node/PeerDirectory.h"
 
 netproxy::core::IoLoop io;
 netproxy::core::TaskLoop business;
@@ -199,11 +199,11 @@ netproxy::core::TaskLoop business;
 netproxy::node::NodeDiscovery discovery(io, 0x12345678, "239.255.42.99", 45454);
 discovery.open(7001);
 
-netproxy::node::NodeConfig config;
+netproxy::node::DiscoveryConfig config;
 config.announceIntervalMs = 3000;
 config.peerTimeoutMs = 10000;
 
-netproxy::node::NodeManager manager(discovery, 0x12345678, config, io, business);
+netproxy::node::PeerDirectory manager(discovery, 0x12345678, config, io, business);
 manager.setPeerHandler([](const netproxy::node::PeerInfo& peer) { /* 新节点 */ });
 manager.start();                      // 设置通道回调、安排定时
 io.start();
@@ -222,7 +222,7 @@ discovery.close();
 
 - `start()` 只设置 `NodeDiscovery` 的回调并投递第一个 tick，不创建任何 socket
 - 公告与淘汰在业务线程执行，发送通过 `IoLoop::post()` 回到 I/O 线程
-- 停止顺序：业务线程 → I/O 线程 → `NodeManager` → `NodeDiscovery`
+- 停止顺序：业务线程 → I/O 线程 → `PeerDirectory` → `NodeDiscovery`
 
 ## 连接与流
 

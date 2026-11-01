@@ -45,7 +45,7 @@ enum class StreamEvent : std::uint8_t {
 };
 
 // 流与连接关闭原因。
-enum class Reason : std::uint8_t {
+enum class CloseReason : std::uint8_t {
     Local = 1,
     Remote = 2,
     Timeout = 3,

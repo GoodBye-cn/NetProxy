@@ -21,7 +21,7 @@ class Stream final {
 public:
     // 流事件：Opened / Rejected / Closed。
     using EventCallback =
-        std::function<void(std::uint32_t streamId, protocol::StreamEvent event, protocol::Reason reason)>;
+        std::function<void(std::uint32_t streamId, protocol::StreamEvent event, protocol::CloseReason reason)>;
 
     // 数据交付：回调返回后 data 失效。
     using DataCallback = std::function<void(std::uint32_t streamId, const char* data, std::size_t size)>;
@@ -49,7 +49,7 @@ public:
     void deliverData(const char* data, std::size_t size);
 
     // 置 Closed 并回调一次事件。
-    void close(protocol::StreamEvent event, protocol::Reason reason);
+    void close(protocol::StreamEvent event, protocol::CloseReason reason);
 
 private:
     std::uint32_t streamId_ = 0;

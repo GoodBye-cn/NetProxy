@@ -91,7 +91,7 @@ private:
 
     // 转发流事件与数据。
     void emitStreamEvent(std::uint32_t streamId, std::uint32_t peerNodeId, protocol::StreamEvent event,
-                         protocol::Reason reason);
+                         protocol::CloseReason reason);
     void emitData(std::uint32_t streamId, std::uint32_t peerNodeId, const char* data, std::size_t size);
 
     DataChannel& channel_;

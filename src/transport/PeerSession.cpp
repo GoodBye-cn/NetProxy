@@ -12,7 +12,7 @@ PeerSession::PeerSession(std::uint32_t localNodeId, std::uint32_t peerNodeId, co
                [this](protocol::PeerFrame frame) { return connection_.send(std::move(frame)); }) {
     connection_.setFrameHandler([this](const protocol::PeerFrame& frame) { streams_.onFrame(frame); });
 
-    connection_.setCloseHandler([this](protocol::Reason reason) {
+    connection_.setCloseHandler([this](protocol::CloseReason reason) {
         connected_.store(false);
         streams_.onConnectionClosed(reason);
     });
@@ -44,7 +44,7 @@ void PeerSession::tick(std::chrono::steady_clock::time_point now) {
     connection_.tick(now);
 }
 
-void PeerSession::close(protocol::Reason reason) {
+void PeerSession::close(protocol::CloseReason reason) {
     connection_.close(reason);
 }
 

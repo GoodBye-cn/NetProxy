@@ -52,7 +52,7 @@ void Stream::deliverData(const char* data, std::size_t size) {
     dataHandler_(streamId_, data, size);
 }
 
-void Stream::close(protocol::StreamEvent event, protocol::Reason reason) {
+void Stream::close(protocol::StreamEvent event, protocol::CloseReason reason) {
     if (state_ == StreamState::Closed) {
         return;
     }

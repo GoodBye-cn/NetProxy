@@ -1,4 +1,4 @@
-#include "NodeManager.h"
+#include "PeerDirectory.h"
 
 #include "Log.h"
 
@@ -6,15 +6,15 @@
 
 namespace netproxy::node {
 
-NodeManager::NodeManager(NodeDiscovery& discovery, std::uint32_t nodeId, const NodeConfig& config, core::IoLoop& io,
+PeerDirectory::PeerDirectory(NodeDiscovery& discovery, std::uint32_t nodeId, const DiscoveryConfig& config, core::IoLoop& io,
                          core::TaskLoop& business)
     : config_(config), discovery_(discovery), nodeId_(nodeId), io_(io), business_(business) {}
 
-NodeManager::~NodeManager() {
+PeerDirectory::~PeerDirectory() {
     stop();
 }
 
-bool NodeManager::start() {
+bool PeerDirectory::start() {
     if (running_.load()) {
         return true;
     }
@@ -40,7 +40,7 @@ bool NodeManager::start() {
     return true;
 }
 
-void NodeManager::stop() {
+void PeerDirectory::stop() {
     if (!running_.exchange(false)) {
         return;
     }
@@ -48,24 +48,24 @@ void NodeManager::stop() {
     Log::debug("节点管理器已停止 nodeId=", nodeId_);
 }
 
-std::uint32_t NodeManager::nodeId() const {
+std::uint32_t PeerDirectory::nodeId() const {
     return nodeId_;
 }
 
-std::vector<PeerInfo> NodeManager::peers() const {
+std::vector<PeerInfo> PeerDirectory::peers() const {
     return peers_.list();
 }
 
-bool NodeManager::findPeer(std::uint32_t nodeId, PeerInfo& peer) const {
-    return peers_.find(nodeId, peer);
+bool PeerDirectory::findPeer(std::uint32_t peerNodeId, PeerInfo& peer) const {
+    return peers_.find(peerNodeId, peer);
 }
 
-void NodeManager::setPeerHandler(PeerHandler handler) {
+void PeerDirectory::setPeerHandler(PeerHandler handler) {
     std::lock_guard<std::mutex> lock(handlerMutex_);
     handler_ = std::move(handler);
 }
 
-void NodeManager::onPeerAnnounced(const PeerInfo& peer) {
+void PeerDirectory::onPeerAnnounced(const PeerInfo& peer) {
     if (!peers_.update(peer)) {
         return;
     }
@@ -83,7 +83,7 @@ void NodeManager::onPeerAnnounced(const PeerInfo& peer) {
     }
 }
 
-void NodeManager::tick() {
+void PeerDirectory::tick() {
     const auto now = std::chrono::steady_clock::now();
 
     if (now - lastAnnounce_ >= std::chrono::milliseconds(config_.announceIntervalMs)) {
@@ -97,7 +97,7 @@ void NodeManager::tick() {
     peers_.removeExpired(std::chrono::milliseconds(config_.peerTimeoutMs));
 }
 
-void NodeManager::scheduleTick() {
+void PeerDirectory::scheduleTick() {
     if (!running_.load()) {
         return;
     }

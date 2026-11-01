@@ -7,7 +7,7 @@ add_executable(netproxy_tests
     net/EventDispatcherTest.cpp
     net/PollerTest.cpp
     node/NodeDiscoveryTest.cpp
-    node/NodeManagerTest.cpp
+    node/PeerDirectoryTest.cpp
     transport/connection/PeerConnectionTest.cpp
     transport/connection/PeerProtocolTest.cpp
     net/SocketTest.cpp
