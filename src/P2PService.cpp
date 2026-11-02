@@ -1,6 +1,7 @@
 #include "P2PService.h"
 
 #include "Log.h"
+#include "core/Bind.h"
 #include "core/IoLoop.h"
 #include "core/TaskLoop.h"
 #include "net/Socket.h"
@@ -73,6 +74,33 @@ struct P2PService::Impl {
         }
         node->setPeerHandler(target);
     }
+
+    // 把内部流事件转成对外事件后回调；锁内只复制回调，锁外调用。
+    void onStreamEvent(std::uint32_t streamId, std::uint32_t peerNodeId, protocol::StreamEvent event,
+                       protocol::CloseReason reason) {
+        StreamHandler target;
+        {
+            std::lock_guard<std::mutex> lock(handlerMutex);
+            target = streamHandler;
+        }
+
+        if (target) {
+            target(streamId, peerNodeId, toPublicEvent(event), static_cast<std::uint8_t>(reason));
+        }
+    }
+
+    // 锁内只复制回调，锁外交付数据。
+    void onData(std::uint32_t streamId, std::uint32_t peerNodeId, const char* data, std::size_t size) {
+        DataHandler target;
+        {
+            std::lock_guard<std::mutex> lock(handlerMutex);
+            target = dataHandler;
+        }
+
+        if (target) {
+            target(streamId, peerNodeId, data, size);
+        }
+    }
 };
 
 P2PService::P2PService() : impl_(std::make_unique<Impl>()) {}
@@ -141,32 +169,8 @@ bool P2PService::start(const P2PServiceConfig& config) {
     impl_->connections = std::make_unique<transport::PeerSessionManager>(*impl_->channel, nodeId, peerConfig,
                                                                          streamConfig, impl_->business);
 
-    Impl* impl = impl_.get();
-    impl_->connections->setStreamHandler([impl](std::uint32_t streamId, std::uint32_t peerNodeId,
-                                                protocol::StreamEvent event, protocol::CloseReason reason) {
-        StreamHandler target;
-        {
-            std::lock_guard<std::mutex> lock(impl->handlerMutex);
-            target = impl->streamHandler;
-        }
-
-        if (target) {
-            target(streamId, peerNodeId, toPublicEvent(event), static_cast<std::uint8_t>(reason));
-        }
-    });
-
-    impl_->connections->setDataHandler(
-        [impl](std::uint32_t streamId, std::uint32_t peerNodeId, const char* data, std::size_t size) {
-            DataHandler target;
-            {
-                std::lock_guard<std::mutex> lock(impl->handlerMutex);
-                target = impl->dataHandler;
-            }
-
-            if (target) {
-                target(streamId, peerNodeId, data, size);
-            }
-        });
+    impl_->connections->setStreamHandler(core::bindFront<&Impl::onStreamEvent>(impl_.get()));
+    impl_->connections->setDataHandler(core::bindFront<&Impl::onData>(impl_.get()));
 
     if (!impl_->connections->start()) {
         impl_->connections.reset();
@@ -202,7 +206,7 @@ bool P2PService::start(const P2PServiceConfig& config) {
     impl_->dataPort = impl_->channel->localPort();
     impl_->running = true;
 
-    Log::info("P2P 服务已启动 nodeId=", impl_->nodeId, " dataPort=", impl_->dataPort);
+    Log::info("P2P service started nodeId=", impl_->nodeId, " dataPort=", impl_->dataPort);
     return true;
 }
 
@@ -236,7 +240,7 @@ void P2PService::stop() {
         impl_->channel.reset();
     }
 
-    Log::info("P2P 服务已停止");
+    Log::info("P2P service stopped");
 }
 
 bool P2PService::isRunning() const {

@@ -29,7 +29,7 @@ bool PeerTable::remove(std::uint32_t nodeId) {
         return false;
     }
 
-    Log::debug("移除节点 nodeId=", nodeId, " ", entry->second.info.address, ":", entry->second.info.port);
+    Log::debug("peer removed nodeId=", nodeId, " ", entry->second.info.address, ":", entry->second.info.port);
     peers_.erase(entry);
     return true;
 }
@@ -70,7 +70,7 @@ std::size_t PeerTable::removeExpired(std::chrono::milliseconds timeout) {
 
     for (auto entry = peers_.begin(); entry != peers_.end();) {
         if (now - entry->second.lastSeen > timeout) {
-            Log::debug("删除过期节点 nodeId=", entry->first, " ", entry->second.info.address, ":",
+            Log::debug("expired peer removed nodeId=", entry->first, " ", entry->second.info.address, ":",
                        entry->second.info.port);
             entry = peers_.erase(entry);
             ++removed;
@@ -80,7 +80,7 @@ std::size_t PeerTable::removeExpired(std::chrono::milliseconds timeout) {
     }
 
     if (removed > 0) {
-        Log::debug("本轮共淘汰 ", removed, " 个节点");
+        Log::debug("expired ", removed, " peers this round");
     }
 
     return removed;

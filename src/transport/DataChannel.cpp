@@ -1,7 +1,9 @@
 #include "transport/DataChannel.h"
 
 #include "Log.h"
+#include "core/Bind.h"
 
+#include <functional>
 #include <utility>
 
 namespace netproxy::transport {
@@ -9,7 +11,7 @@ namespace netproxy::transport {
 DataChannel::DataChannel(core::IoLoop& io) : io_(io) {}
 
 PacketSender DataChannel::sender() {
-    return [this](const std::string& packet, const net::IPAddress& target) { send(packet, target); };
+    return core::bindFront<&DataChannel::send>(this);
 }
 
 DataChannel::~DataChannel() {
@@ -25,18 +27,18 @@ bool DataChannel::open(const std::string& bindAddress, std::uint16_t port) {
         bindAddress.empty() ? net::IPAddress::any(port) : net::IPAddress::parse(bindAddress, port);
 
     if (!address.isValid()) {
-        Log::error("数据通道打开失败: 地址无效 ", bindAddress, ":", port);
+        Log::error("data channel open failed: invalid address ", bindAddress, ":", port);
         return false;
     }
 
     if (!socket_.open(address) || !socket_.bind(address) || !socket_.setNonBlocking(true)) {
-        Log::error("数据通道打开失败: 无法绑定 ", address.toString());
+        Log::error("data channel open failed: cannot bind ", address.toString());
         socket_.close();
         return false;
     }
 
     opened_ = true;
-    Log::debug("数据通道已打开 port=", socket_.localPort());
+    Log::debug("data channel opened port=", socket_.localPort());
     return true;
 }
 
@@ -67,7 +69,7 @@ std::uint16_t DataChannel::localPort() const {
 
 bool DataChannel::setReceiver(Receiver receiver) {
     if (!opened_) {
-        Log::warning("数据通道注册回调失败: 通道未打开");
+        Log::warning("data channel setReceiver failed: channel not open");
         return false;
     }
 
@@ -77,23 +79,25 @@ bool DataChannel::setReceiver(Receiver receiver) {
         return true;
     }
 
-    registered_ = io_.dispatcher().add(socket_.nativeHandle(), net::Poller::Read,
-                                       [this](net::SocketHandle, std::uint32_t) { handleReadable(); });
+    registered_ =
+        io_.dispatcher().add(socket_.nativeHandle(), net::Poller::Read, core::bindFront<&DataChannel::onEvent>(this));
     if (!registered_) {
-        Log::error("数据通道注册回调失败: 无法注册读事件");
+        Log::error("data channel setReceiver failed: cannot register read event");
     }
     return registered_;
 }
 
 void DataChannel::send(const std::string& packet, const net::IPAddress& target) {
-    io_.post([this, packet, target] {
-        if (socket_.isValid()) {
-            socket_.sendTo(packet, target);
-        }
-    });
+    io_.post(std::bind(&DataChannel::sendOnIoThread, this, packet, target));
 }
 
-void DataChannel::handleReadable() {
+void DataChannel::sendOnIoThread(const std::string& packet, const net::IPAddress& target) {
+    if (socket_.isValid()) {
+        socket_.sendTo(packet, target);
+    }
+}
+
+void DataChannel::onEvent(net::SocketHandle, std::uint32_t) {
     while (true) {
         char buffer[1500] = {};
         net::IPAddress from;

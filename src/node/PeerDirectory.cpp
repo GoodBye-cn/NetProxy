@@ -1,7 +1,9 @@
 #include "PeerDirectory.h"
 
 #include "Log.h"
+#include "core/Bind.h"
 
+#include <functional>
 #include <utility>
 
 namespace netproxy::node {
@@ -20,15 +22,14 @@ bool PeerDirectory::start() {
     }
 
     if (!discovery_.isOpen()) {
-        Log::error("节点管理器启动失败: 发现通道未打开");
+        Log::error("peer directory start failed: discovery channel not open");
         return false;
     }
 
-    const bool registered = discovery_.setReceiver(
-        [this](const PeerInfo& peer) { business_.post([this, peer] { onPeerAnnounced(peer); }); });
+    const bool registered = discovery_.setReceiver(core::bindFront<&PeerDirectory::onPeerSeen>(this));
 
     if (!registered) {
-        Log::error("节点管理器启动失败: 无法注册发现回调");
+        Log::error("peer directory start failed: cannot register discovery callback");
         return false;
     }
 
@@ -36,7 +37,7 @@ bool PeerDirectory::start() {
     lastAnnounce_ = std::chrono::steady_clock::now() - std::chrono::milliseconds(config_.announceIntervalMs);
     scheduleTick();
 
-    Log::debug("节点管理器已启动 nodeId=", nodeId_);
+    Log::debug("peer directory started nodeId=", nodeId_);
     return true;
 }
 
@@ -45,7 +46,7 @@ void PeerDirectory::stop() {
         return;
     }
 
-    Log::debug("节点管理器已停止 nodeId=", nodeId_);
+    Log::debug("peer directory stopped nodeId=", nodeId_);
 }
 
 std::uint32_t PeerDirectory::nodeId() const {
@@ -65,12 +66,16 @@ void PeerDirectory::setPeerHandler(PeerHandler handler) {
     handler_ = std::move(handler);
 }
 
+void PeerDirectory::onPeerSeen(const PeerInfo& peer) {
+    business_.post(std::bind(&PeerDirectory::onPeerAnnounced, this, peer));
+}
+
 void PeerDirectory::onPeerAnnounced(const PeerInfo& peer) {
     if (!peers_.update(peer)) {
         return;
     }
 
-    Log::debug("发现节点 nodeId=", peer.nodeId, " ", peer.address, ":", peer.port);
+    Log::debug("peer discovered nodeId=", peer.nodeId, " ", peer.address, ":", peer.port);
 
     PeerHandler handler;
     {
@@ -83,18 +88,29 @@ void PeerDirectory::onPeerAnnounced(const PeerInfo& peer) {
     }
 }
 
+void PeerDirectory::announceOnIoThread() {
+    Log::debug("multicast announce nodeId=", nodeId_, " port=", discovery_.announcePort());
+    discovery_.announce();
+}
+
 void PeerDirectory::tick() {
     const auto now = std::chrono::steady_clock::now();
 
     if (now - lastAnnounce_ >= std::chrono::milliseconds(config_.announceIntervalMs)) {
         lastAnnounce_ = now;
-        io_.post([this] {
-            Log::debug("组播公告 nodeId=", nodeId_, " port=", discovery_.announcePort());
-            discovery_.announce();
-        });
+        io_.post(std::bind(&PeerDirectory::announceOnIoThread, this));
     }
 
     peers_.removeExpired(std::chrono::milliseconds(config_.peerTimeoutMs));
+}
+
+void PeerDirectory::onTickTimer() {
+    if (!running_.load()) {
+        return;
+    }
+
+    tick();
+    scheduleTick();
 }
 
 void PeerDirectory::scheduleTick() {
@@ -102,14 +118,7 @@ void PeerDirectory::scheduleTick() {
         return;
     }
 
-    business_.postDelayed(config_.tickIntervalMs, [this] {
-        if (!running_.load()) {
-            return;
-        }
-
-        tick();
-        scheduleTick();
-    });
+    business_.postDelayed(config_.tickIntervalMs, std::bind(&PeerDirectory::onTickTimer, this));
 }
 
 } // namespace netproxy::node

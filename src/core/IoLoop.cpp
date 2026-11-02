@@ -17,7 +17,7 @@ bool IoLoop::start() {
         return false;
     }
 
-    thread_ = std::thread([this] { run(); });
+    thread_ = std::thread(&IoLoop::run, this);
     return true;
 }
 

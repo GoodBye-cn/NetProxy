@@ -25,7 +25,7 @@ int dataSendFlags() {
 
 bool TCPSocket::connect(const IPAddress& address) {
     if (!address.isValid()) {
-        Log::error("TCP connect 失败: 目标地址无效");
+        Log::error("TCP connect failed: invalid target address");
         return false;
     }
 
@@ -35,22 +35,22 @@ bool TCPSocket::connect(const IPAddress& address) {
 
     if (::connect(nativeHandle(), address.data(), address.length()) != 0) {
         const std::string error = lastErrorMessage();
-        Log::warning("TCP connect 失败 ", address.toString(), ": ", error);
+        Log::warning("TCP connect failed ", address.toString(), ": ", error);
         return false;
     }
 
-    Log::debug("TCP 连接已建立 ", address.toString());
+    Log::debug("TCP connection established ", address.toString());
     return true;
 }
 
 bool TCPSocket::listen(int backlog) {
     if (!isValid()) {
-        Log::error("TCP listen 失败: 套接字无效");
+        Log::error("TCP listen failed: invalid socket");
         return false;
     }
 
     if (::listen(nativeHandle(), backlog) != 0) {
-        Log::error("TCP listen 失败: ", lastErrorMessage());
+        Log::error("TCP listen failed: ", lastErrorMessage());
         return false;
     }
     return true;
@@ -58,22 +58,22 @@ bool TCPSocket::listen(int backlog) {
 
 TCPSocket TCPSocket::accept() {
     if (!isValid()) {
-        Log::error("TCP accept 失败: 套接字无效");
+        Log::error("TCP accept failed: invalid socket");
         return TCPSocket(INVALID_SOCKET_HANDLE);
     }
 
     const SocketHandle handle = ::accept(nativeHandle(), nullptr, nullptr);
     if (handle == INVALID_SOCKET_HANDLE) {
-        Log::warning("TCP accept 失败: ", lastErrorMessage());
+        Log::warning("TCP accept failed: ", lastErrorMessage());
     } else {
-        Log::debug("TCP 接受连接 handle=", handle);
+        Log::debug("TCP connection accepted handle=", handle);
     }
     return TCPSocket(handle);
 }
 
 int TCPSocket::send(const void* data, std::size_t size) {
     if (!isValid()) {
-        Log::warning("TCP send 失败: 套接字无效");
+        Log::warning("TCP send failed: invalid socket");
         return -1;
     }
 
@@ -84,7 +84,7 @@ int TCPSocket::send(const void* data, std::size_t size) {
 #endif
 
     if (sent < 0) {
-        Log::warning("TCP send 失败: ", lastErrorMessage());
+        Log::warning("TCP send failed: ", lastErrorMessage());
     }
     return sent;
 }
@@ -95,7 +95,7 @@ int TCPSocket::send(const std::string& data) {
 
 int TCPSocket::receive(void* buffer, std::size_t size) {
     if (!isValid()) {
-        Log::warning("TCP receive 失败: 套接字无效");
+        Log::warning("TCP receive failed: invalid socket");
         return -1;
     }
 
@@ -106,7 +106,7 @@ int TCPSocket::receive(void* buffer, std::size_t size) {
 #endif
 
     if (received < 0) {
-        Log::warning("TCP receive 失败: ", lastErrorMessage());
+        Log::warning("TCP receive failed: ", lastErrorMessage());
     }
     return received;
 }
@@ -128,7 +128,7 @@ std::string TCPSocket::receive(std::size_t maxSize) {
 
 bool TCPSocket::shutdownWrite() {
     if (!isValid()) {
-        Log::warning("TCP shutdownWrite 失败: 套接字无效");
+        Log::warning("TCP shutdownWrite failed: invalid socket");
         return false;
     }
 
@@ -139,7 +139,7 @@ bool TCPSocket::shutdownWrite() {
 #endif
 
     if (result != 0) {
-        Log::warning("TCP shutdownWrite 失败: ", lastErrorMessage());
+        Log::warning("TCP shutdownWrite failed: ", lastErrorMessage());
         return false;
     }
     return true;
@@ -147,7 +147,7 @@ bool TCPSocket::shutdownWrite() {
 
 bool TCPSocket::setNoDelay(bool enabled) {
     if (!isValid()) {
-        Log::warning("TCP setNoDelay 失败: 套接字无效");
+        Log::warning("TCP setNoDelay failed: invalid socket");
         return false;
     }
 
@@ -160,7 +160,7 @@ bool TCPSocket::setNoDelay(bool enabled) {
 #endif
 
     if (result != 0) {
-        Log::warning("TCP setNoDelay 失败: ", lastErrorMessage());
+        Log::warning("TCP setNoDelay failed: ", lastErrorMessage());
         return false;
     }
     return true;

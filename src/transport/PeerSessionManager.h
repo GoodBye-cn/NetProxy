@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -152,8 +153,26 @@ public:
     void setDataHandler(StreamMux::DataHandler handler);
 
 private:
+    // I/O 线程：拷贝报文后投递到业务线程。
+    void onDatagramReceived(const net::IPAddress& from, const char* data, std::size_t size);
+
     // 业务线程：解析报文并分发到会话。
     void onDatagram(const net::IPAddress& from, const char* data, std::size_t size);
+
+    // 业务线程：持报文副本的入口，供投递任务绑定。
+    void dispatchDatagram(const net::IPAddress& from, const std::string& packet);
+
+    // 业务线程：发起握手。
+    void connectSession(std::uint32_t peerNodeId, const net::IPAddress& peer);
+
+    // 业务线程：建流，连接未就绪时同时发起握手。
+    void openStreamOnSession(std::uint32_t peerNodeId, const net::IPAddress& peer, std::uint32_t streamId);
+
+    // 业务线程：关闭流。
+    void closeStreamOnSession(std::uint32_t streamId);
+
+    // 业务线程：向指定流提交数据。
+    void sendDataOnStream(std::uint32_t streamId, const std::string& payload);
 
     // 业务线程：遍历会话 tick 并清理已关闭的会话。
     void tick();

@@ -197,6 +197,12 @@ public:
     ConnectionState state() const;
 
 private:
+    // 供连接层判定空闲关闭；流表非空返回 true。
+    bool hasStreams() const;
+
+    // 连接层进入 Closed：置跨线程标志并广播流关闭。
+    void onConnectionClosed(protocol::CloseReason reason);
+
     // 握手成功后推进流层状态：置 connected_ 并补发排队开流。
     void onHandshakeCompleted();
 

@@ -103,6 +103,15 @@ public:
     void onPeerAnnounced(const PeerInfo& peer);
 
 private:
+    // I/O 线程：收到公告后拷贝并投递到业务线程。
+    void onPeerSeen(const PeerInfo& peer);
+
+    // I/O 线程：组播发送一次公告。
+    void announceOnIoThread();
+
+    // 业务线程：定时器入口，确认仍在运行后推进 tick。
+    void onTickTimer();
+
     // 业务线程：周期公告与过期淘汰。
     void tick();
 

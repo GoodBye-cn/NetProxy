@@ -2,11 +2,11 @@
 # 方案 B：JNI 源码直接并入 netproxy 目标，Android 出库只有一个 .so。
 # 约束：仅 Android 交叉编译 + BUILD_SHARED_LIBS=ON。
 if(NOT ANDROID)
-    message(FATAL_ERROR "jni 目录只用于 Android 交叉编译。")
+    message(FATAL_ERROR "the jni directory is only for Android cross-compilation")
 endif()
 
 if(NOT BUILD_SHARED_LIBS)
-    message(FATAL_ERROR "NETPROXY_BUILD_JNI 需要 BUILD_SHARED_LIBS=ON，否则无法生成单个 .so。")
+    message(FATAL_ERROR "NETPROXY_BUILD_JNI requires BUILD_SHARED_LIBS=ON to produce a single .so")
 endif()
 
 set(NETPROXY_JNI_SOURCES
@@ -38,7 +38,7 @@ target_sources(netproxy PRIVATE
 # 回调与 logcat 日志桥接需要 liblog。
 find_library(NETPROXY_ANDROID_LOG_LIB log)
 if(NOT NETPROXY_ANDROID_LOG_LIB)
-    message(FATAL_ERROR "未在 NDK sysroot 中找到 liblog。")
+    message(FATAL_ERROR "liblog not found in the NDK sysroot")
 endif()
 
 target_link_libraries(netproxy PRIVATE ${NETPROXY_ANDROID_LOG_LIB})

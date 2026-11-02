@@ -63,7 +63,7 @@ bool WakeupChannel::open() {
     // 唤醒通道直接调用 Winsock，需先确保套接字库已初始化，否则 socket 返回
     // WSANOTINITIALISED（10093）。
     if (!Socket::ensureLibrary()) {
-        Log::error("创建唤醒通道失败: 套接字库初始化失败");
+        Log::error("failed to create wakeup channel: socket library init failed");
         return false;
     }
 
@@ -76,14 +76,14 @@ bool WakeupChannel::open() {
         if (writer != INVALID_SOCKET_HANDLE) {
             ::closesocket(writer);
         }
-        Log::error("创建唤醒通道失败: ", WSAGetLastError());
+        Log::error("failed to create wakeup channel: ", WSAGetLastError());
         return false;
     }
 
     if (!connectToPeer(writer, reader)) {
         ::closesocket(reader);
         ::closesocket(writer);
-        Log::error("创建唤醒通道失败: ", WSAGetLastError());
+        Log::error("failed to create wakeup channel: ", WSAGetLastError());
         return false;
     }
 
@@ -93,7 +93,7 @@ bool WakeupChannel::open() {
 #else
     int fds[2] = {-1, -1};
     if (::pipe(fds) != 0) {
-        Log::error("创建唤醒管道失败: ", std::strerror(errno));
+        Log::error("failed to create wakeup pipe: ", std::strerror(errno));
         return false;
     }
 
@@ -102,7 +102,7 @@ bool WakeupChannel::open() {
         if (flags < 0 || ::fcntl(fds[index], F_SETFL, flags | O_NONBLOCK) != 0) {
             ::close(fds[0]);
             ::close(fds[1]);
-            Log::error("创建唤醒管道失败: ", std::strerror(errno));
+            Log::error("failed to create wakeup pipe: ", std::strerror(errno));
             return false;
         }
     }

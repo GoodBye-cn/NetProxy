@@ -89,8 +89,11 @@ public:
     PacketSender sender();
 
 private:
-    // I/O 线程：读取全部已到达的报文并回调。
-    void handleReadable();
+    // I/O 线程：读事件入口，读取全部已到达的报文并回调；事件参数不使用。
+    void onEvent(net::SocketHandle, std::uint32_t);
+
+    // I/O 线程：把报文交给 socket，由 send() 投递执行。
+    void sendOnIoThread(const std::string& packet, const net::IPAddress& target);
 
     core::IoLoop& io_;
     net::UDPSocket socket_;   // 数据 UDP socket

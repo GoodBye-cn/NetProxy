@@ -74,7 +74,8 @@ private:
 ## 4. 通用格式
 
 - 契约类注释用 `/** ... */`，实现说明用 `//`。
-- 语言为中文，使用中文标点；代码标识符、类型名保持原样。
+- 注释语言为中文，使用中文标点；代码标识符、类型名保持原样。
+- 运行期输出用英文：`Log::*` 消息、`std::exception::what()` 文本、`static_assert` 诊断与 CMake `FATAL_ERROR` 消息一律英文，避免非 UTF-8 终端与构建日志乱码；格式为「子模块 动作 failed: 原因」，如 `data channel open failed: cannot bind 0.0.0.0:0`。
 - 行宽以仓库根 `.clang-format` 的 `ColumnLimit: 120` 为准；提交前执行 `clang-format -i <file>`，并用 `clang-format --dry-run --Werror <file>` 复查。
 - 类注释写职责、线程模型、生命周期；不写实现步骤。
 

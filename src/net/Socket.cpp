@@ -57,7 +57,7 @@ std::string addressToText(const sockaddr* address, SocketLength length) {
 
 IPAddress IPAddress::parse(const std::string& host, std::uint16_t port) {
     if (!Socket::ensureLibrary()) {
-        Log::error("地址解析失败: 套接字库初始化失败");
+        Log::error("address resolution failed: socket library init failed");
         return IPAddress();
     }
 
@@ -69,7 +69,7 @@ IPAddress IPAddress::parse(const std::string& host, std::uint16_t port) {
     const std::string service = std::to_string(port);
     const int result = getaddrinfo(host.c_str(), service.c_str(), &hints, &head);
     if (result != 0) {
-        Log::warning("地址解析失败 ", host, ":", port, " (", result, ")");
+        Log::warning("address resolution failed ", host, ":", port, " (", result, ")");
         return IPAddress();
     }
 
@@ -85,7 +85,7 @@ IPAddress IPAddress::parse(const std::string& host, std::uint16_t port) {
     }
 
     if (chosen == nullptr) {
-        Log::warning("地址解析失败 ", host, ":", port, ": 无可用地址");
+        Log::warning("address resolution failed ", host, ":", port, ": no usable address");
     }
 
     IPAddress address;
@@ -260,7 +260,7 @@ std::uint16_t Socket::localPort() const {
     sockaddr_storage address{};
     SocketLength length = sizeof(address);
     if (getsockname(handle_, reinterpret_cast<sockaddr*>(&address), &length) != 0) {
-        Log::warning("获取本地端口失败: ", lastErrorMessage());
+        Log::warning("failed to get local port: ", lastErrorMessage());
         return 0;
     }
     return addressPort(reinterpret_cast<const sockaddr*>(&address));
@@ -288,7 +288,7 @@ int Socket::addressFamily() const {
 
 bool Socket::setReuseAddress(bool enabled) {
     if (!isValid()) {
-        Log::warning("设置地址复用失败: 套接字无效");
+        Log::warning("failed to set address reuse: invalid socket");
         return false;
     }
 
@@ -301,7 +301,7 @@ bool Socket::setReuseAddress(bool enabled) {
 #endif
 
     if (result != 0) {
-        Log::warning("设置地址复用失败: ", lastErrorMessage());
+        Log::warning("failed to set address reuse: ", lastErrorMessage());
         return false;
     }
     return true;
@@ -309,27 +309,27 @@ bool Socket::setReuseAddress(bool enabled) {
 
 bool Socket::setNonBlocking(bool enabled) {
     if (!isValid()) {
-        Log::warning("设置非阻塞失败: 套接字无效");
+        Log::warning("failed to set non-blocking: invalid socket");
         return false;
     }
 
 #ifdef _WIN32
     u_long mode = enabled ? 1 : 0;
     if (::ioctlsocket(handle_, FIONBIO, &mode) != 0) {
-        Log::warning("设置非阻塞失败: ", lastErrorMessage());
+        Log::warning("failed to set non-blocking: ", lastErrorMessage());
         return false;
     }
     return true;
 #else
     const int flags = ::fcntl(handle_, F_GETFL, 0);
     if (flags < 0) {
-        Log::warning("设置非阻塞失败: ", lastErrorMessage());
+        Log::warning("failed to set non-blocking: ", lastErrorMessage());
         return false;
     }
 
     const int updated = enabled ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK);
     if (::fcntl(handle_, F_SETFL, updated) != 0) {
-        Log::warning("设置非阻塞失败: ", lastErrorMessage());
+        Log::warning("failed to set non-blocking: ", lastErrorMessage());
         return false;
     }
     return true;
@@ -338,7 +338,7 @@ bool Socket::setNonBlocking(bool enabled) {
 
 bool Socket::open(const IPAddress& address) {
     if (!address.isValid()) {
-        Log::error("创建套接字失败: 地址无效");
+        Log::error("failed to create socket: invalid address");
         return false;
     }
     return create(address.family());
@@ -346,7 +346,7 @@ bool Socket::open(const IPAddress& address) {
 
 bool Socket::bind(const IPAddress& address) {
     if (!address.isValid()) {
-        Log::error("绑定失败: 地址无效");
+        Log::error("bind failed: invalid address");
         return false;
     }
 
@@ -355,35 +355,35 @@ bool Socket::bind(const IPAddress& address) {
     }
 
     if (addressFamily() != address.family()) {
-        Log::error("绑定失败: 套接字与地址族不一致 ", address.toString());
+        Log::error("bind failed: socket and address family mismatch ", address.toString());
         return false;
     }
 
     if (::bind(nativeHandle(), address.data(), address.length()) != 0) {
         const std::string error = lastErrorMessage();
-        Log::error("绑定失败 ", address.toString(), ": ", error);
+        Log::error("bind failed ", address.toString(), ": ", error);
         return false;
     }
 
-    Log::debug("绑定成功 ", address.toString());
+    Log::debug("bind succeeded ", address.toString());
     return true;
 }
 
 bool Socket::create(int family) {
     // 已持有句柄时不再重建：静默关闭可能销毁外部仍在使用的句柄。
     if (isValid()) {
-        Log::debug("创建套接字跳过: 已持有句柄");
+        Log::debug("socket creation skipped: handle already held");
         return false;
     }
 
     if (!ensureLibrary()) {
-        Log::error("创建套接字失败: 套接字库初始化失败");
+        Log::error("failed to create socket: socket library init failed");
         return false;
     }
 
     const SocketHandle handle = ::socket(family, socketType_, protocol_);
     if (handle == INVALID_SOCKET_HANDLE) {
-        Log::error("创建套接字失败: ", lastErrorMessage());
+        Log::error("failed to create socket: ", lastErrorMessage());
         return false;
     }
 

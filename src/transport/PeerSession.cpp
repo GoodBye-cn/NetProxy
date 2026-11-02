@@ -1,20 +1,17 @@
 #include "PeerSession.h"
 
+#include "core/Bind.h"
+
 #include <utility>
 
 namespace netproxy::transport {
 
 PeerSession::PeerSession(std::uint32_t localNodeId, std::uint32_t peerNodeId, const net::IPAddress& peer,
                          const PeerConfig& peerConfig, const StreamConfig& streamConfig, PacketSender sender)
-    : connection_(peerNodeId, localNodeId, peer, peerConfig, sender, [this] { return streams_.hasStreams(); }),
-      streams_(peerNodeId, streamConfig,
-               [this](protocol::PeerFrame frame) { return connection_.send(std::move(frame)); }) {
-    connection_.setFrameHandler([this](const protocol::PeerFrame& frame) { streams_.onFrame(frame); });
-
-    connection_.setCloseHandler([this](protocol::CloseReason reason) {
-        connected_.store(false);
-        streams_.onConnectionClosed(reason);
-    });
+    : connection_(peerNodeId, localNodeId, peer, peerConfig, sender, core::bindFront<&PeerSession::hasStreams>(this)),
+      streams_(peerNodeId, streamConfig, core::bindFront<&PeerConnection::send>(&connection_)) {
+    connection_.setFrameHandler(core::bindFront<&StreamMux::onFrame>(&streams_));
+    connection_.setCloseHandler(core::bindFront<&PeerSession::onConnectionClosed>(this));
 }
 
 bool PeerSession::connect() {
@@ -93,6 +90,15 @@ bool PeerSession::isConnected() const {
 
 ConnectionState PeerSession::state() const {
     return connection_.state();
+}
+
+bool PeerSession::hasStreams() const {
+    return streams_.hasStreams();
+}
+
+void PeerSession::onConnectionClosed(protocol::CloseReason reason) {
+    connected_.store(false);
+    streams_.onConnectionClosed(reason);
 }
 
 void PeerSession::onHandshakeCompleted() {

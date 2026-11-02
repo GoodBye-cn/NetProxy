@@ -1,10 +1,13 @@
 #include "PeerSessionManager.h"
 
 #include "Log.h"
+#include "core/Bind.h"
 #include "transport/connection/PeerProtocol.h"
 
 #include <chrono>
+#include <functional>
 #include <random>
+#include <string>
 #include <utility>
 
 namespace netproxy::transport {
@@ -44,14 +47,10 @@ bool PeerSessionManager::start() {
         return true;
     }
 
-    const bool registered = channel_.setReceiver([this](const net::IPAddress& from, const char* data,
-                                                        std::size_t size) {
-        std::string packet(data, size);
-        business_.post([this, from, packet = std::move(packet)] { onDatagram(from, packet.data(), packet.size()); });
-    });
+    const bool registered = channel_.setReceiver(core::bindFront<&PeerSessionManager::onDatagramReceived>(this));
 
     if (!registered) {
-        Log::error("连接管理启动失败: 无法注册数据通道回调");
+        Log::error("session manager start failed: cannot register data channel callback");
         return false;
     }
 
@@ -76,8 +75,12 @@ bool PeerSessionManager::connect(std::uint32_t peerNodeId, const net::IPAddress&
         return false;
     }
 
-    business_.post([this, peerNodeId, peer] { ensureSession(peerNodeId, peer)->connect(); });
+    business_.post(std::bind(&PeerSessionManager::connectSession, this, peerNodeId, peer));
     return true;
+}
+
+void PeerSessionManager::connectSession(std::uint32_t peerNodeId, const net::IPAddress& peer) {
+    ensureSession(peerNodeId, peer)->connect();
 }
 
 std::uint32_t PeerSessionManager::openStream(std::uint32_t peerNodeId, const net::IPAddress& peer) {
@@ -88,18 +91,20 @@ std::uint32_t PeerSessionManager::openStream(std::uint32_t peerNodeId, const net
     // 流号在调用线程生成，保证公共 API 能同步返回（业务线程只负责建流）。
     const std::uint32_t streamId = allocateStreamId();
 
-    business_.post([this, peerNodeId, peer, streamId] {
-        auto session = ensureSession(peerNodeId, peer);
-        if (!session->openStream(streamId)) {
-            emitStreamEvent(streamId, peerNodeId, protocol::StreamEvent::Rejected, protocol::CloseReason::Error);
-        }
-
-        if (!session->isConnected()) {
-            session->connect();
-        }
-    });
-
+    business_.post(std::bind(&PeerSessionManager::openStreamOnSession, this, peerNodeId, peer, streamId));
     return streamId;
+}
+
+void PeerSessionManager::openStreamOnSession(std::uint32_t peerNodeId, const net::IPAddress& peer,
+                                             std::uint32_t streamId) {
+    auto session = ensureSession(peerNodeId, peer);
+    if (!session->openStream(streamId)) {
+        emitStreamEvent(streamId, peerNodeId, protocol::StreamEvent::Rejected, protocol::CloseReason::Error);
+    }
+
+    if (!session->isConnected()) {
+        session->connect();
+    }
 }
 
 bool PeerSessionManager::closeStream(std::uint32_t streamId) {
@@ -107,14 +112,15 @@ bool PeerSessionManager::closeStream(std::uint32_t streamId) {
         return false;
     }
 
-    business_.post([this, streamId] {
-        auto session = sessionForStream(streamId);
-        if (session) {
-            session->closeStream(streamId);
-        }
-    });
-
+    business_.post(std::bind(&PeerSessionManager::closeStreamOnSession, this, streamId));
     return true;
+}
+
+void PeerSessionManager::closeStreamOnSession(std::uint32_t streamId) {
+    auto session = sessionForStream(streamId);
+    if (session) {
+        session->closeStream(streamId);
+    }
 }
 
 bool PeerSessionManager::sendData(std::uint32_t streamId, const void* data, std::size_t size) {
@@ -123,14 +129,15 @@ bool PeerSessionManager::sendData(std::uint32_t streamId, const void* data, std:
     }
 
     std::string payload(static_cast<const char*>(data), size);
-    business_.post([this, streamId, payload = std::move(payload)] {
-        auto session = sessionForStream(streamId);
-        if (session) {
-            session->sendData(streamId, payload.data(), payload.size());
-        }
-    });
-
+    business_.post(std::bind(&PeerSessionManager::sendDataOnStream, this, streamId, std::move(payload)));
     return true;
+}
+
+void PeerSessionManager::sendDataOnStream(std::uint32_t streamId, const std::string& payload) {
+    auto session = sessionForStream(streamId);
+    if (session) {
+        session->sendData(streamId, payload.data(), payload.size());
+    }
 }
 
 bool PeerSessionManager::isConnected(std::uint32_t peerNodeId) const {
@@ -175,6 +182,14 @@ void PeerSessionManager::setStreamHandler(StreamMux::StreamHandler handler) {
 void PeerSessionManager::setDataHandler(StreamMux::DataHandler handler) {
     std::lock_guard<std::mutex> lock(sessionsMutex_);
     dataHandler_ = std::move(handler);
+}
+
+void PeerSessionManager::onDatagramReceived(const net::IPAddress& from, const char* data, std::size_t size) {
+    business_.post(std::bind(&PeerSessionManager::dispatchDatagram, this, from, std::string(data, size)));
+}
+
+void PeerSessionManager::dispatchDatagram(const net::IPAddress& from, const std::string& packet) {
+    onDatagram(from, packet.data(), packet.size());
 }
 
 void PeerSessionManager::onDatagram(const net::IPAddress& from, const char* data, std::size_t size) {
@@ -282,7 +297,7 @@ void PeerSessionManager::scheduleTick() {
         return;
     }
 
-    business_.postDelayed(peerConfig_.tickMs, [this] { tick(); });
+    business_.postDelayed(peerConfig_.tickMs, std::bind(&PeerSessionManager::tick, this));
 }
 
 std::shared_ptr<PeerSession> PeerSessionManager::ensureSession(std::uint32_t peerNodeId, const net::IPAddress& peer) {
@@ -297,12 +312,8 @@ std::shared_ptr<PeerSession> PeerSessionManager::ensureSession(std::uint32_t pee
     auto session = std::make_shared<PeerSession>(localNodeId_, peerNodeId, peer, peerConfig_, streamConfig_, sender_);
 
     // 事件转发不带会话指针：流层保证回调在锁外触发。
-    session->setStreamHandler(
-        [this, peerNodeId](std::uint32_t streamId, std::uint32_t, protocol::StreamEvent event,
-                           protocol::CloseReason reason) { emitStreamEvent(streamId, peerNodeId, event, reason); });
-
-    session->setDataHandler([this, peerNodeId](std::uint32_t streamId, std::uint32_t, const char* data,
-                                               std::size_t size) { emitData(streamId, peerNodeId, data, size); });
+    session->setStreamHandler(core::bindFront<&PeerSessionManager::emitStreamEvent>(this));
+    session->setDataHandler(core::bindFront<&PeerSessionManager::emitData>(this));
 
     std::lock_guard<std::mutex> lock(sessionsMutex_);
     const auto existing = sessions_.find(peerNodeId);

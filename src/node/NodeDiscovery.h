@@ -97,8 +97,8 @@ public:
     std::uint16_t announcePort() const;
 
 private:
-    // I/O 线程：读取全部已到达的公告并回调。
-    void handleReadable();
+    // I/O 线程：读事件入口，读取全部已到达的公告并回调；事件参数不使用。
+    void onEvent(net::SocketHandle, std::uint32_t);
 
     // 构造并组播发送指定类型的报文。
     bool sendMessage(AnnounceType type);

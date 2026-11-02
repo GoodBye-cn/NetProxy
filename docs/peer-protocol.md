@@ -455,7 +455,8 @@ public:
     void send(const std::string& packet, const net::IPAddress& target);
 
 private:
-    void handleReadable();
+    void onEvent(net::SocketHandle handle, std::uint32_t events);   // 读事件入口
+    void sendOnIoThread(const std::string& packet, const net::IPAddress& target);
 
     core::IoLoop& io_;
     net::UDPSocket socket_;

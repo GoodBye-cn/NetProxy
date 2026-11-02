@@ -26,19 +26,20 @@ void handleSignal(int) {
 }
 
 void printUsage(const char* program) {
-    netproxy::Log::warning("用法: ", program, " [选项]");
-    netproxy::Log::warning("  --node-id <N>       节点标识，0 表示随机（默认 0）");
-    netproxy::Log::warning("  --port <N>          数据端口，0 表示系统分配（默认 0）");
-    netproxy::Log::warning("  --bind <IP>         数据通道绑定地址，空表示 0.0.0.0");
-    netproxy::Log::warning("  --group <IP>        组播组，默认 239.255.42.99");
-    netproxy::Log::warning("  --group-port <N>    组播端口，默认 45454");
-    netproxy::Log::warning("  --announce-ms <N>   公告周期，默认 3000");
-    netproxy::Log::warning("  --timeout-ms <N>    节点过期时间，默认 10000");
-    netproxy::Log::warning("  --open <N>          启动后向指定节点发起流");
+    netproxy::Log::warning("usage: ", program, " [options]");
+    netproxy::Log::warning("  --node-id <N>       node id, 0 means random (default 0)");
+    netproxy::Log::warning("  --port <N>          data port, 0 means system assigned (default 0)");
+    netproxy::Log::warning("  --bind <IP>         data channel bind address, empty means 0.0.0.0");
+    netproxy::Log::warning("  --group <IP>        multicast group, default 239.255.42.99");
+    netproxy::Log::warning("  --group-port <N>    multicast port, default 45454");
+    netproxy::Log::warning("  --announce-ms <N>   announce interval, default 3000");
+    netproxy::Log::warning("  --timeout-ms <N>    peer timeout, default 10000");
+    netproxy::Log::warning("  --open <N>          open a stream to the given peer after start");
 }
 
 void printCommands() {
-    netproxy::Log::warning("命令: open <nodeId> | close <streamId> | send <streamId> <text> | streams | peers | quit");
+    netproxy::Log::warning(
+        "commands: open <nodeId> | close <streamId> | send <streamId> <text> | streams | peers | quit");
 }
 
 bool parseUInt(const char* text, unsigned long& value) {
@@ -75,9 +76,9 @@ void handleCommand(netproxy::P2PService& service, const std::string& line) {
 
         const std::uint32_t streamId = service.openStream(static_cast<std::uint32_t>(nodeId));
         if (streamId == 0) {
-            netproxy::Log::warning("发起流失败 nodeId=", nodeId);
+            netproxy::Log::warning("open stream failed nodeId=", nodeId);
         } else {
-            netproxy::Log::info("发起流 streamId=", streamId, " 对端=", nodeId);
+            netproxy::Log::info("opening stream streamId=", streamId, " peer=", nodeId);
         }
         return;
     }
@@ -90,9 +91,9 @@ void handleCommand(netproxy::P2PService& service, const std::string& line) {
         }
 
         if (service.closeStream(static_cast<std::uint32_t>(streamId))) {
-            netproxy::Log::info("已关闭流 streamId=", streamId);
+            netproxy::Log::info("stream closed streamId=", streamId);
         } else {
-            netproxy::Log::warning("关闭流失败 streamId=", streamId);
+            netproxy::Log::warning("close stream failed streamId=", streamId);
         }
         return;
     }
@@ -111,14 +112,15 @@ void handleCommand(netproxy::P2PService& service, const std::string& line) {
         }
 
         if (!service.isStreamOpen(static_cast<std::uint32_t>(streamId))) {
-            netproxy::Log::warning("流尚未打开，等日志出现「流已打开」后再发送 streamId=", streamId);
+            netproxy::Log::warning("stream not open yet, wait for the stream opened log before sending streamId=",
+                                   streamId);
             return;
         }
 
         if (service.sendData(static_cast<std::uint32_t>(streamId), text.data(), text.size())) {
-            netproxy::Log::info("已提交数据 streamId=", streamId, " 长度=", text.size());
+            netproxy::Log::info("data submitted streamId=", streamId, " size=", text.size());
         } else {
-            netproxy::Log::warning("提交数据失败 streamId=", streamId);
+            netproxy::Log::warning("submit data failed streamId=", streamId);
         }
         return;
     }
@@ -126,13 +128,13 @@ void handleCommand(netproxy::P2PService& service, const std::string& line) {
     if (command == "streams") {
         const std::vector<netproxy::StreamInfo> streams = service.streams();
         if (streams.empty()) {
-            netproxy::Log::info("当前没有流");
+            netproxy::Log::info("no streams");
             return;
         }
 
         for (const netproxy::StreamInfo& info : streams) {
-            netproxy::Log::info("流 streamId=", info.streamId, " 对端=", info.peerNodeId,
-                                info.open ? " 已建立" : " 握手中");
+            netproxy::Log::info("stream streamId=", info.streamId, " peer=", info.peerNodeId,
+                                info.open ? " established" : " handshaking");
         }
         return;
     }
@@ -140,12 +142,12 @@ void handleCommand(netproxy::P2PService& service, const std::string& line) {
     if (command == "peers") {
         const std::vector<netproxy::PeerInfo> peers = service.peers();
         if (peers.empty()) {
-            netproxy::Log::info("当前没有已发现节点");
+            netproxy::Log::info("no peers discovered");
             return;
         }
 
         for (const netproxy::PeerInfo& peer : peers) {
-            netproxy::Log::info("节点 nodeId=", peer.nodeId, " ", peer.address, ":", peer.port);
+            netproxy::Log::info("peer nodeId=", peer.nodeId, " ", peer.address, ":", peer.port);
         }
         return;
     }
@@ -160,7 +162,7 @@ void handleCommand(netproxy::P2PService& service, const std::string& line) {
         return;
     }
 
-    netproxy::Log::warning("未知命令 ", command);
+    netproxy::Log::warning("unknown command ", command);
     printCommands();
 }
 
@@ -244,7 +246,7 @@ int main(int argc, char* argv[]) {
                 config.multicastGroup = argument;
             }
         } else {
-            netproxy::Log::error("未知参数 ", option);
+            netproxy::Log::error("unknown option ", option);
             printUsage(argv[0]);
             return 1;
         }
@@ -252,38 +254,39 @@ int main(int argc, char* argv[]) {
 
     netproxy::P2PService service;
     service.setPeerHandler([](const netproxy::PeerInfo& peer) {
-        netproxy::Log::info("发现节点 nodeId=", peer.nodeId, " ", peer.address, ":", peer.port);
+        netproxy::Log::info("peer discovered nodeId=", peer.nodeId, " ", peer.address, ":", peer.port);
     });
     service.setDataHandler([](std::uint32_t id, std::uint32_t peerNodeId, const char* data, std::size_t size) {
-        netproxy::Log::info("收到数据 streamId=", id, " 对端=", peerNodeId, " 长度=", size,
-                            " 内容=", std::string(data, size));
+        netproxy::Log::info("data received streamId=", id, " peer=", peerNodeId, " size=", size,
+                            " content=", std::string(data, size));
     });
     service.setStreamHandler([&openTarget, &streamId](std::uint32_t id, std::uint32_t peerNodeId,
                                                       netproxy::StreamEvent event, std::uint8_t reason) {
         switch (event) {
         case netproxy::StreamEvent::Opened:
-            netproxy::Log::info("流已打开 streamId=", id, " 对端=", peerNodeId);
+            netproxy::Log::info("stream opened streamId=", id, " peer=", peerNodeId);
             break;
         case netproxy::StreamEvent::Rejected:
-            netproxy::Log::warning("流被拒绝或超时 streamId=", id, " 对端=", peerNodeId,
+            netproxy::Log::warning("stream rejected or timed out streamId=", id, " peer=", peerNodeId,
                                    " reason=", static_cast<int>(reason));
             if (peerNodeId == openTarget) {
                 streamId = 0; // 对端未发现或拒绝，允许自动重试
             }
             break;
         case netproxy::StreamEvent::Closed:
-            netproxy::Log::info("流已关闭 streamId=", id, " 对端=", peerNodeId, " reason=", static_cast<int>(reason));
+            netproxy::Log::info("stream closed streamId=", id, " peer=", peerNodeId,
+                                " reason=", static_cast<int>(reason));
             break;
         }
     });
 
     if (!service.start(config)) {
-        netproxy::Log::error("服务启动失败");
+        netproxy::Log::error("service start failed");
         return 1;
     }
 
-    netproxy::Log::info("服务已启动 nodeId=", service.nodeId(), " dataPort=", service.dataPort());
-    netproxy::Log::info("发现通道 ", config.multicastGroup, ":", config.multicastPort);
+    netproxy::Log::info("service started nodeId=", service.nodeId(), " dataPort=", service.dataPort());
+    netproxy::Log::info("discovery channel ", config.multicastGroup, ":", config.multicastPort);
     printCommands();
 
     // 交互线程：读取标准输入，退出命令或 EOF 时结束运行
@@ -303,9 +306,9 @@ int main(int argc, char* argv[]) {
             const std::uint32_t opened = service.openStream(openTarget);
             if (opened != 0) {
                 streamId = opened;
-                netproxy::Log::info("发起流 streamId=", opened, " 对端=", openTarget);
+                netproxy::Log::info("opening stream streamId=", opened, " peer=", openTarget);
             } else {
-                netproxy::Log::info("发起流未受理，稍后重试 nodeId=", openTarget);
+                netproxy::Log::info("open stream not accepted, retry later nodeId=", openTarget);
             }
             nextAttempt = std::chrono::steady_clock::now() + std::chrono::seconds(1);
         }

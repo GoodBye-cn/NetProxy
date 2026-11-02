@@ -768,13 +768,14 @@ private:
 ```cpp
 PeerSession::PeerSession(...)
     : connection_(peerNodeId, localNodeId, peer, peerConfig,
-                  sender, [this] { return streams_.hasStreams(); }),   // 惰性求值，允许 streams_ 尚未构造
-      streams_(peerNodeId, streamConfig,
-               [this](PeerFrame frame) { return connection_.send(std::move(frame)); }) {
-    connection_.setFrameHandler([this](const PeerFrame& frame) { streams_.onFrame(frame); });
-    connection_.setCloseHandler([this](protocol::CloseReason reason) { onConnectionClosed(reason); });
+                  sender, core::bindFront<&PeerSession::hasStreams>(this)),   // 惰性求值，允许 streams_ 尚未构造
+      streams_(peerNodeId, streamConfig, core::bindFront<&PeerConnection::send>(&connection_)) {
+    connection_.setFrameHandler(core::bindFront<&StreamMux::onFrame>(&streams_));
+    connection_.setCloseHandler(core::bindFront<&PeerSession::onConnectionClosed>(this));
 }
 ```
+
+接线统一用 `core::bindFront`（见 `src/core/Bind.h`）：它把「成员函数指针 + 对象指针」转成与 `std::function` 兼容的闭包，取代原先只为转发一次调用的捕获 lambda；参数个数与类型不一致时在转换为 `std::function` 处报错。
 
 状态同步点，一处都不能漏：
 

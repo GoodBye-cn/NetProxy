@@ -8,7 +8,7 @@ namespace netproxy::net {
 
 bool UDPSocket::setBroadcast(bool enabled) {
     if (!isValid()) {
-        Log::warning("UDP setBroadcast 失败: 套接字无效");
+        Log::warning("UDP setBroadcast failed: invalid socket");
         return false;
     }
 
@@ -21,7 +21,7 @@ bool UDPSocket::setBroadcast(bool enabled) {
 #endif
 
     if (result != 0) {
-        Log::warning("UDP setBroadcast 失败: ", lastErrorMessage());
+        Log::warning("UDP setBroadcast failed: ", lastErrorMessage());
         return false;
     }
     return true;
@@ -29,13 +29,13 @@ bool UDPSocket::setBroadcast(bool enabled) {
 
 bool UDPSocket::updateMulticastMembership(const std::string& group, const std::string& interfaceAddress, int option) {
     if (!isValid()) {
-        Log::warning("UDP 组播操作失败: 套接字无效");
+        Log::warning("UDP multicast operation failed: invalid socket");
         return false;
     }
 
     const IPAddress groupAddress = IPAddress::parse(group, 0);
     if (!groupAddress.isValid() || groupAddress.family() != AF_INET) {
-        Log::error("UDP 组播操作失败: 组播地址无效 ", group);
+        Log::error("UDP multicast operation failed: invalid group address ", group);
         return false;
     }
 
@@ -46,7 +46,7 @@ bool UDPSocket::updateMulticastMembership(const std::string& group, const std::s
     if (!interfaceAddress.empty()) {
         const IPAddress interface = IPAddress::parse(interfaceAddress, 0);
         if (!interface.isValid() || interface.family() != AF_INET) {
-            Log::error("UDP 组播操作失败: 接口地址无效 ", interfaceAddress);
+            Log::error("UDP multicast operation failed: invalid interface address ", interfaceAddress);
             return false;
         }
         request.imr_interface = reinterpret_cast<const sockaddr_in*>(interface.data())->sin_addr;
@@ -61,7 +61,7 @@ bool UDPSocket::updateMulticastMembership(const std::string& group, const std::s
 
     if (result != 0) {
         const std::string error = lastErrorMessage();
-        Log::error("UDP 组播操作失败 ", group, ": ", error);
+        Log::error("UDP multicast operation failed ", group, ": ", error);
         return false;
     }
     return true;
@@ -77,7 +77,7 @@ bool UDPSocket::leaveMulticastGroup(const std::string& group, const std::string&
 
 bool UDPSocket::setMulticastLoop(bool enabled) {
     if (!isValid()) {
-        Log::warning("UDP setMulticastLoop 失败: 套接字无效");
+        Log::warning("UDP setMulticastLoop failed: invalid socket");
         return false;
     }
 
@@ -91,7 +91,7 @@ bool UDPSocket::setMulticastLoop(bool enabled) {
 #endif
 
     if (result != 0) {
-        Log::warning("UDP setMulticastLoop 失败: ", lastErrorMessage());
+        Log::warning("UDP setMulticastLoop failed: ", lastErrorMessage());
         return false;
     }
     return true;
@@ -99,12 +99,12 @@ bool UDPSocket::setMulticastLoop(bool enabled) {
 
 bool UDPSocket::setMulticastTtl(int ttl) {
     if (!isValid()) {
-        Log::warning("UDP setMulticastTtl 失败: 套接字无效");
+        Log::warning("UDP setMulticastTtl failed: invalid socket");
         return false;
     }
 
     if (ttl < 0 || ttl > 255) {
-        Log::warning("UDP setMulticastTtl 失败: TTL 应在 0-255 之间");
+        Log::warning("UDP setMulticastTtl failed: TTL must be within 0-255");
         return false;
     }
 
@@ -118,7 +118,7 @@ bool UDPSocket::setMulticastTtl(int ttl) {
 #endif
 
     if (result != 0) {
-        Log::warning("UDP setMulticastTtl 失败: ", lastErrorMessage());
+        Log::warning("UDP setMulticastTtl failed: ", lastErrorMessage());
         return false;
     }
     return true;
@@ -126,7 +126,7 @@ bool UDPSocket::setMulticastTtl(int ttl) {
 
 int UDPSocket::sendTo(const void* data, std::size_t size, const IPAddress& address) {
     if (!address.isValid()) {
-        Log::error("UDP sendTo 失败: 目标地址无效");
+        Log::error("UDP sendTo failed: invalid target address");
         return -1;
     }
 
@@ -135,7 +135,7 @@ int UDPSocket::sendTo(const void* data, std::size_t size, const IPAddress& addre
     }
 
     if (addressFamily() != address.family()) {
-        Log::warning("UDP sendTo 失败: 套接字与目标地址族不一致 ", address.toString());
+        Log::warning("UDP sendTo failed: socket and target address family mismatch ", address.toString());
         return -1;
     }
 
@@ -148,7 +148,7 @@ int UDPSocket::sendTo(const void* data, std::size_t size, const IPAddress& addre
 
     if (sent < 0) {
         const std::string error = lastErrorMessage();
-        Log::warning("UDP sendTo 失败 ", address.toString(), ": ", error);
+        Log::warning("UDP sendTo failed ", address.toString(), ": ", error);
     }
     return sent;
 }
@@ -159,7 +159,7 @@ int UDPSocket::sendTo(const std::string& data, const IPAddress& address) {
 
 int UDPSocket::receiveFrom(void* buffer, std::size_t size, IPAddress& from) {
     if (!isValid()) {
-        Log::warning("UDP receiveFrom 失败: 套接字无效");
+        Log::warning("UDP receiveFrom failed: invalid socket");
         return -1;
     }
 
@@ -184,7 +184,7 @@ int UDPSocket::receiveFrom(void* buffer, std::size_t size, IPAddress& from) {
             return -1;
         }
 #endif
-        Log::warning("UDP receiveFrom 失败: ", lastErrorMessage());
+        Log::warning("UDP receiveFrom failed: ", lastErrorMessage());
         return -1;
     }
 

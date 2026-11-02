@@ -48,7 +48,7 @@ std::ptrdiff_t Poller::indexOf(SocketHandle handle) const {
 Poller::Poller() {
     wakeupReady_ = wakeup_.open();
     if (!wakeupReady_) {
-        Log::error("Poller 初始化失败: 无法创建唤醒通道");
+        Log::error("poller init failed: cannot create wakeup channel");
     }
 }
 
@@ -58,14 +58,14 @@ Poller::~Poller() {
 
 bool Poller::add(SocketHandle handle, std::uint32_t events) {
     if (handle == INVALID_SOCKET_HANDLE) {
-        Log::warning("Poller 添加失败: 句柄无效");
+        Log::warning("poller add failed: invalid handle");
         return false;
     }
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (indexOf(handle) >= 0) {
-            Log::warning("Poller 添加失败: 句柄已存在");
+            Log::warning("poller add failed: handle already registered");
             return false;
         }
 
@@ -85,7 +85,7 @@ bool Poller::modify(SocketHandle handle, std::uint32_t events) {
         std::lock_guard<std::mutex> lock(mutex_);
         const std::ptrdiff_t index = indexOf(handle);
         if (index < 0) {
-            Log::warning("Poller 修改失败: 句柄未注册");
+            Log::warning("poller modify failed: handle not registered");
             return false;
         }
 
@@ -101,7 +101,7 @@ bool Poller::remove(SocketHandle handle) {
         std::lock_guard<std::mutex> lock(mutex_);
         const std::ptrdiff_t index = indexOf(handle);
         if (index < 0) {
-            Log::warning("Poller 移除失败: 句柄未注册");
+            Log::warning("poller remove failed: handle not registered");
             return false;
         }
 
@@ -176,9 +176,9 @@ int Poller::poll(int timeoutMs, std::vector<ReadyEvent>& readyEvents) {
             if (errno == EINTR) {
                 return 0;
             }
-            Log::warning("poll 失败: ", std::strerror(errno));
+            Log::warning("poll failed: ", std::strerror(errno));
 #else
-            Log::warning("poll 失败: ", WSAGetLastError());
+            Log::warning("poll failed: ", WSAGetLastError());
 #endif
             return -1;
         }

@@ -25,7 +25,7 @@ bool TaskLoop::start() {
         return false;
     }
 
-    thread_ = std::thread([this] { run(); });
+    thread_ = std::thread(&TaskLoop::run, this);
     return true;
 }
 

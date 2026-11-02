@@ -1,8 +1,10 @@
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <thread>
 
 #include "TestSupport.h"
+#include "core/Bind.h"
 #include "core/IoLoop.h"
 #include "core/TaskLoop.h"
 
@@ -74,10 +76,41 @@ void taskLoopZeroDelayRunsImmediately() {
     loop.stop();
 }
 
+// bindFront 的目标对象。
+struct BindTarget {
+    int lastValue = 0; // take 收到的参数
+    int calls = 0;     // noop 调用次数
+
+    void take(int value) {
+        lastValue = value;
+    }
+    void noop() {
+        ++calls;
+    }
+};
+
+void bindFrontForwardsArguments() {
+    BindTarget target;
+    const std::function<void(int)> setter = netproxy::core::bindFront<&BindTarget::take>(&target);
+
+    setter(42);
+    test::checkEquals(target.lastValue, 42, "bindFront: 参数按原样转发");
+}
+
+void bindFrontSupportsZeroArguments() {
+    BindTarget target;
+    const std::function<void()> runner = netproxy::core::bindFront<&BindTarget::noop>(&target);
+
+    runner();
+    test::checkEquals(target.calls, 1, "bindFront: 零参回调可调用");
+}
+
 } // namespace
 
 void runCoreTests() {
     NETPROXY_CASE(ioLoopRunsPostedTasks);
     NETPROXY_CASE(taskLoopRunsImmediateAndDelayed);
     NETPROXY_CASE(taskLoopZeroDelayRunsImmediately);
+    NETPROXY_CASE(bindFrontForwardsArguments);
+    NETPROXY_CASE(bindFrontSupportsZeroArguments);
 }

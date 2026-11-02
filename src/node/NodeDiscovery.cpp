@@ -2,6 +2,7 @@
 
 #include "DiscoveryProtocol.h"
 #include "Log.h"
+#include "core/Bind.h"
 
 #include <utility>
 
@@ -24,37 +25,37 @@ bool NodeDiscovery::open(std::uint16_t announcePort) {
 
     multicastAddress_ = net::IPAddress::parse(multicastGroup_, multicastPort_);
     if (!multicastAddress_.isValid() || multicastAddress_.family() != AF_INET) {
-        Log::error("节点发现启动失败: 组播地址无效 ", multicastGroup_, ":", multicastPort_);
+        Log::error("node discovery start failed: invalid multicast address ", multicastGroup_, ":", multicastPort_);
         return false;
     }
 
     const net::IPAddress bindAddress = net::IPAddress::any(multicastPort_);
     if (!socket_.open(bindAddress)) {
-        Log::error("节点发现启动失败: 无法创建套接字");
+        Log::error("node discovery start failed: cannot create socket");
         return false;
     }
 
     // 多个实例共享同一组播端口时需要地址复用
     if (!socket_.setReuseAddress(true)) {
-        Log::error("节点发现启动失败: 无法开启地址复用");
+        Log::error("node discovery start failed: cannot enable address reuse");
         socket_.close();
         return false;
     }
 
     if (!socket_.bind(bindAddress)) {
-        Log::error("节点发现启动失败: 无法绑定组播端口 ", multicastPort_);
+        Log::error("node discovery start failed: cannot bind multicast port ", multicastPort_);
         socket_.close();
         return false;
     }
 
     if (!socket_.joinMulticastGroup(multicastGroup_)) {
-        Log::error("节点发现启动失败: 无法加入组播组 ", multicastGroup_);
+        Log::error("node discovery start failed: cannot join multicast group ", multicastGroup_);
         socket_.close();
         return false;
     }
 
     if (!socket_.setMulticastLoop(true) || !socket_.setMulticastTtl(1)) {
-        Log::error("节点发现启动失败: 无法设置组播参数");
+        Log::error("node discovery start failed: cannot set multicast options");
         socket_.close();
         return false;
     }
@@ -65,7 +66,8 @@ bool NodeDiscovery::open(std::uint16_t announcePort) {
     }
 
     opened_ = true;
-    Log::debug("节点发现通道已打开 group=", multicastGroup_, ":", multicastPort_, " announcePort=", announcePort_);
+    Log::debug("node discovery channel opened group=", multicastGroup_, ":", multicastPort_,
+               " announcePort=", announcePort_);
     return true;
 }
 
@@ -97,7 +99,7 @@ bool NodeDiscovery::sendBye() {
 
 bool NodeDiscovery::setReceiver(Receiver receiver) {
     if (!opened_) {
-        Log::warning("节点发现注册回调失败: 通道未打开");
+        Log::warning("node discovery setReceiver failed: channel not open");
         return false;
     }
 
@@ -107,10 +109,10 @@ bool NodeDiscovery::setReceiver(Receiver receiver) {
         return true;
     }
 
-    registered_ = io_.dispatcher().add(socket_.nativeHandle(), net::Poller::Read,
-                                       [this](net::SocketHandle, std::uint32_t) { handleReadable(); });
+    registered_ =
+        io_.dispatcher().add(socket_.nativeHandle(), net::Poller::Read, core::bindFront<&NodeDiscovery::onEvent>(this));
     if (!registered_) {
-        Log::error("节点发现注册回调失败: 无法注册读事件");
+        Log::error("node discovery setReceiver failed: cannot register read event");
     }
     return registered_;
 }
@@ -121,7 +123,7 @@ std::uint16_t NodeDiscovery::announcePort() const {
 
 bool NodeDiscovery::sendMessage(AnnounceType type) {
     if (!opened_) {
-        Log::warning("节点发现发送失败: 通道未打开");
+        Log::warning("node discovery send failed: channel not open");
         return false;
     }
 
@@ -131,13 +133,13 @@ bool NodeDiscovery::sendMessage(AnnounceType type) {
     message.port = announcePort_;
 
     if (socket_.sendTo(message.encode(), multicastAddress_) <= 0) {
-        Log::warning("节点发现发送失败: ", type == AnnounceType::Announce ? "Announce" : "Bye");
+        Log::warning("node discovery send failed: ", type == AnnounceType::Announce ? "announce" : "bye");
         return false;
     }
     return true;
 }
 
-void NodeDiscovery::handleReadable() {
+void NodeDiscovery::onEvent(net::SocketHandle, std::uint32_t) {
     while (true) {
         char buffer[64] = {};
         net::IPAddress from;

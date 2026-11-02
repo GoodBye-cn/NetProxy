@@ -9,19 +9,19 @@ namespace netproxy::net {
 
 bool EventDispatcher::add(SocketHandle handle, std::uint32_t events, Handler handler) {
     if (handle == INVALID_SOCKET_HANDLE) {
-        Log::warning("事件分发器注册失败: 句柄无效");
+        Log::warning("dispatcher add failed: invalid handle");
         return false;
     }
 
     if (!handler) {
-        Log::warning("事件分发器注册失败: 回调为空");
+        Log::warning("dispatcher add failed: empty callback");
         return false;
     }
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (handlers_.find(handle) != handlers_.end()) {
-            Log::warning("事件分发器注册失败: 句柄已注册");
+            Log::warning("dispatcher add failed: handle already registered");
             return false;
         }
     }
